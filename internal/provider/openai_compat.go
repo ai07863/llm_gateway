@@ -101,6 +101,14 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 	go func() {
 		defer close(ch)
 		defer res.Body.Close()
+		send := func(c StreamChunk) bool {
+			select {
+			case ch <- c:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
@@ -110,7 +118,7 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			}
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if payload == "[DONE]" {
-				ch <- StreamChunk{Done: true}
+				send(StreamChunk{Done: true})
 				return
 			}
 			var parsed struct {
@@ -124,7 +132,9 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 				continue
 			}
 			if len(parsed.Choices) > 0 && parsed.Choices[0].Delta.Content != "" {
-				ch <- StreamChunk{Content: parsed.Choices[0].Delta.Content}
+				if !send(StreamChunk{Content: parsed.Choices[0].Delta.Content}) {
+					return
+				}
 			}
 		}
 	}()
