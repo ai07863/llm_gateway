@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"llm-gateway/internal/config"
+	"llm-gateway/internal/pricing"
 	"llm-gateway/internal/provider"
 	"llm-gateway/internal/proxy"
+	"llm-gateway/internal/usage"
 )
 
 func NewRouter(s config.Settings) *gin.Engine {
@@ -26,16 +29,34 @@ func NewRouter(s config.Settings) *gin.Engine {
 		providers = append(providers, provider.NewOpenAICompat(pc))
 		models = append(models, pc.Model)
 	}
+	repo, err := usage.NewSQLite(s.DBPath)
+	if err != nil {
+		panic(err)
+	}
 	registerModels(v1, models)
+	registerAdmin(v1, repo)
+
+	recordUsage := func(resp provider.ChatResponse, p provider.Provider) {
+		_ = repo.Record(context.Background(), usage.Record{
+			ID:               newRequestID(),
+			Model:            resp.Model,
+			Provider:         p.Name(),
+			PromptTokens:     resp.PromptTokens,
+			CompletionTokens: resp.CompletionTokens,
+			Cost:             pricing.Cost(resp.Model, resp.PromptTokens, resp.CompletionTokens),
+		})
+	}
+
 	registerChat(v1,
 		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
 			if len(providers) == 0 {
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
-			resp, _, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
+			resp, used, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
 				return provider.ChatResponse{}, err
 			}
+			recordUsage(resp, used)
 			return resp, nil
 		},
 		func(c *gin.Context, req provider.ChatRequest) error {
