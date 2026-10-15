@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -23,17 +24,15 @@ func NewRouter(s config.Settings) *gin.Engine {
 		models = append(models, pc.Model)
 	}
 	registerModels(v1, models)
-	registerChat(v1, func(c *gin.Context, req provider.ChatRequest) provider.ChatResponse {
+	registerChat(v1, func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
 		if len(providers) == 0 {
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "no provider configured"}})
-			return provider.ChatResponse{}
+			return provider.ChatResponse{}, errors.New("no provider configured")
 		}
 		resp, err := providers[0].Chat(c.Request.Context(), req)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
-			return provider.ChatResponse{}
+			return provider.ChatResponse{}, err
 		}
-		return resp
+		return resp, nil
 	})
 
 	return r

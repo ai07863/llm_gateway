@@ -14,14 +14,18 @@ type chatBody struct {
 	Temperature *float64           `json:"temperature"`
 }
 
-func registerChat(v1 *gin.RouterGroup, chat func(c *gin.Context, req provider.ChatRequest) provider.ChatResponse) {
+func registerChat(v1 *gin.RouterGroup, chat func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error)) {
 	v1.POST("/chat/completions", func(c *gin.Context) {
 		var body chatBody
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
 			return
 		}
-		resp := chat(c, provider.ChatRequest{Model: body.Model, Messages: body.Messages, Temperature: body.Temperature})
+		resp, err := chat(c, provider.ChatRequest{Model: body.Model, Messages: body.Messages, Temperature: body.Temperature})
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"model": resp.Model,
 			"choices": []gin.H{{"message": gin.H{"role": "assistant", "content": resp.Content}}},
