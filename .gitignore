@@ -1,0 +1,5 @@
+.env
+*.db
+/server
+/server.exe
+/out/
