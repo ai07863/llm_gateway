@@ -10,6 +10,7 @@ import (
 
 	"llm-gateway/internal/config"
 	"llm-gateway/internal/provider"
+	"llm-gateway/internal/proxy"
 )
 
 func NewRouter(s config.Settings) *gin.Engine {
@@ -31,7 +32,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if len(providers) == 0 {
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
-			resp, err := providers[0].Chat(c.Request.Context(), req)
+			resp, _, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
 				return provider.ChatResponse{}, err
 			}
@@ -41,7 +42,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if len(providers) == 0 {
 				return errors.New("no provider configured")
 			}
-			ch, err := providers[0].ChatStream(c.Request.Context(), req)
+			ch, _, err := proxy.StreamWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
 				return err
 			}
