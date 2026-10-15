@@ -2,12 +2,29 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"llm-gateway/internal/provider"
 )
+
+type StatusError struct {
+	Status int
+	Msg    string
+}
+
+func (e *StatusError) Error() string { return e.Msg }
+
+func writeError(c *gin.Context, err error) {
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		c.JSON(statusErr.Status, gin.H{"error": gin.H{"message": statusErr.Msg}})
+		return
+	}
+	c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
+}
 
 type chatBody struct {
 	Model       string             `json:"model"`
@@ -30,13 +47,13 @@ func registerChat(
 		req := provider.ChatRequest{Model: body.Model, Messages: body.Messages, Temperature: body.Temperature}
 		if body.Stream {
 			if err := chatStream(c, req); err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
+				writeError(c, err)
 			}
 			return
 		}
 		resp, err := chat(c, req)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
+			writeError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"llm-gateway/internal/budget"
 	"llm-gateway/internal/cache"
 	"llm-gateway/internal/config"
 	"llm-gateway/internal/pricing"
@@ -56,6 +57,13 @@ func NewRouter(s config.Settings) *gin.Engine {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
 				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
+			}
+			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
+			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
+			case budget.Reject:
+				return provider.ChatResponse{}, &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
+			case budget.Degrade:
+				req.Model = budget.CheaperModel(req.Model)
 			}
 			if len(providers) == 0 {
 				return provider.ChatResponse{}, errors.New("no provider configured")
