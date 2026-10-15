@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>LLM Gateway 用量看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<h1>LLM Gateway</h1>
+<p>本月花费：<span id="cost">-</span> 元</p>
+<canvas id="chart" height="120"></canvas>
+<p>请先填入网关 token 后点击刷新：</p>
+<input id="token" placeholder="gateway token" />
+<button onclick="load()">刷新</button>
+<script>
+async function load() {
+  const token = document.getElementById('token').value;
+  const res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
+  const data = await res.json();
+  document.getElementById('cost').textContent = (data.month_cost || 0).toFixed(3);
+  const labels = (data.records || []).map(r => r.created_at || '');
+  const costs = (data.records || []).map(r => r.cost || 0);
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: '单次成本', data: costs }] },
+  });
+}
+</script>
+</body>
+</html>

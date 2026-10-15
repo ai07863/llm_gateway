@@ -24,6 +24,7 @@ import (
 func NewRouter(s config.Settings) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), RequestIDMiddleware())
+	registerDashboard(r)
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	m := metrics.New()
