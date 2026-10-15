@@ -29,9 +29,10 @@ func NewExact(ttl time.Duration) *Exact {
 
 func (c *Exact) Key(req provider.ChatRequest) string {
 	b, _ := json.Marshal(struct {
-		Model    string
-		Messages []provider.Message
-	}{req.Model, req.Messages})
+		Model       string
+		Messages    []provider.Message
+		Temperature *float64
+	}{req.Model, req.Messages, req.Temperature})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

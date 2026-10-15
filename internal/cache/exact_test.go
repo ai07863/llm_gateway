@@ -21,6 +21,32 @@ func TestExactCacheHitAndMiss(t *testing.T) {
 	}
 }
 
+func TestExactCacheKeyDistinguishesTemperature(t *testing.T) {
+	c := NewExact(time.Minute)
+	zero := 0.0
+	one := 1.0
+	base := provider.ChatRequest{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}}
+
+	reqZero := base
+	reqZero.Temperature = &zero
+	reqOne := base
+	reqOne.Temperature = &one
+
+	keyZero := c.Key(reqZero)
+	keyOne := c.Key(reqOne)
+	if keyZero == keyOne {
+		t.Fatal("keys for different temperatures must differ")
+	}
+
+	c.Set(keyZero, "zero-answer")
+	if _, ok := c.Get(keyOne); ok {
+		t.Fatal("value cached under temperature=0 must not be returned for temperature=1")
+	}
+	if v, ok := c.Get(keyZero); !ok || v != "zero-answer" {
+		t.Fatalf("expected hit 'zero-answer', got %q %v", v, ok)
+	}
+}
+
 func TestExactCacheExpiry(t *testing.T) {
 	now := time.Now()
 	NowFunc = func() time.Time { return now }
