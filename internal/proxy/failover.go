@@ -2,11 +2,15 @@ package proxy
 
 import (
 	"context"
+	"errors"
 
 	"llm-gateway/internal/provider"
 )
 
 func ChatWithFailover(ctx context.Context, providers []provider.Provider, req provider.ChatRequest) (provider.ChatResponse, provider.Provider, error) {
+	if len(providers) == 0 {
+		return provider.ChatResponse{}, nil, errors.New("no providers available")
+	}
 	var lastErr error
 	for _, p := range providers {
 		resp, err := p.Chat(ctx, req)
@@ -19,6 +23,9 @@ func ChatWithFailover(ctx context.Context, providers []provider.Provider, req pr
 }
 
 func StreamWithFailover(ctx context.Context, providers []provider.Provider, req provider.ChatRequest) (<-chan provider.StreamChunk, provider.Provider, error) {
+	if len(providers) == 0 {
+		return nil, nil, errors.New("no providers available")
+	}
 	var lastErr error
 	for _, p := range providers {
 		ch, err := p.ChatStream(ctx, req)

@@ -44,3 +44,21 @@ func TestChatWithFailoverUsesBackup(t *testing.T) {
 		t.Fatalf("want backup/ok, got %s/%s", used.Name(), resp.Content)
 	}
 }
+
+func TestFailoverEmptyProvidersReturnsError(t *testing.T) {
+	resp, used, err := ChatWithFailover(context.Background(), nil, provider.ChatRequest{})
+	if err == nil {
+		t.Fatalf("ChatWithFailover: want error, got nil (resp=%+v)", resp)
+	}
+	if used != nil {
+		t.Fatalf("ChatWithFailover: want nil provider, got %v", used)
+	}
+
+	ch, usedStream, err := StreamWithFailover(context.Background(), nil, provider.ChatRequest{})
+	if err == nil {
+		t.Fatalf("StreamWithFailover: want error, got nil (ch=%v)", ch)
+	}
+	if usedStream != nil {
+		t.Fatalf("StreamWithFailover: want nil provider, got %v", usedStream)
+	}
+}
