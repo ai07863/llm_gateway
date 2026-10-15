@@ -86,6 +86,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if len(providers) == 0 {
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
+			start := time.Now()
 			resp, used, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
 				return provider.ChatResponse{}, err
@@ -95,6 +96,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 				_ = semantic.Store(c.Request.Context(), scope, lastUser, resp.Content)
 			}
 			recordUsage(resp, used)
+			m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
 			m.Requests.WithLabelValues(used.Name(), "200").Inc()
 			m.Tokens.WithLabelValues(used.Name(), "prompt").Add(float64(resp.PromptTokens))
 			m.Tokens.WithLabelValues(used.Name(), "completion").Add(float64(resp.CompletionTokens))
