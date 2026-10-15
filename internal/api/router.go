@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"llm-gateway/internal/cache"
 	"llm-gateway/internal/config"
 	"llm-gateway/internal/pricing"
 	"llm-gateway/internal/provider"
@@ -36,6 +38,8 @@ func NewRouter(s config.Settings) *gin.Engine {
 	registerModels(v1, models)
 	registerAdmin(v1, repo)
 
+	exact := cache.NewExact(10 * time.Minute)
+
 	recordUsage := func(resp provider.ChatResponse, p provider.Provider) {
 		_ = repo.Record(context.Background(), usage.Record{
 			ID:               newRequestID(),
@@ -49,6 +53,10 @@ func NewRouter(s config.Settings) *gin.Engine {
 
 	registerChat(v1,
 		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
+			key := exact.Key(req)
+			if cached, ok := exact.Get(key); ok {
+				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
+			}
 			if len(providers) == 0 {
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
@@ -56,6 +64,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if err != nil {
 				return provider.ChatResponse{}, err
 			}
+			exact.Set(key, resp.Content)
 			recordUsage(resp, used)
 			return resp, nil
 		},
