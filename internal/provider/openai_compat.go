@@ -82,8 +82,17 @@ type oaEmbedResponse struct {
 }
 
 func (p *openAICompat) Embed(ctx context.Context, texts []string) ([][]float64, error) {
-	body, _ := json.Marshal(map[string]any{"model": p.cfg.Model, "input": texts})
-	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/embeddings", bytes.NewReader(body))
+	if p.cfg.EmbedModel == "" {
+		return nil, fmt.Errorf("no embed model configured for provider %s", p.cfg.Name)
+	}
+	body, err := json.Marshal(map[string]any{"model": p.cfg.EmbedModel, "input": texts})
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	res, err := p.client.Do(httpReq)

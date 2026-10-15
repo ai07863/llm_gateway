@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 
 	exact := cache.NewExact(10 * time.Minute)
 	var semantic *cache.Semantic
-	if len(providers) > 0 {
+	if len(providers) > 0 && s.Providers[0].EmbedModel != "" {
 		if emb, ok := providers[0].(provider.Embedder); ok {
 			semantic = cache.NewSemantic(emb, 0.95, 2000)
 		}
@@ -65,8 +66,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
 			}
 			lastUser := lastUserMessage(req.Messages)
+			scope := semanticScope(req)
 			if semantic != nil {
-				if answer, ok := semantic.Lookup(c.Request.Context(), lastUser); ok {
+				if answer, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
 					return provider.ChatResponse{Model: req.Model, Content: answer}, nil
 				}
 			}
@@ -86,7 +88,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			}
 			exact.Set(key, resp.Content)
 			if semantic != nil {
-				_ = semantic.Store(c.Request.Context(), lastUser, resp.Content)
+				_ = semantic.Store(c.Request.Context(), scope, lastUser, resp.Content)
 			}
 			recordUsage(resp, used)
 			return resp, nil
@@ -124,4 +126,19 @@ func lastUserMessage(messages []provider.Message) string {
 		}
 	}
 	return ""
+}
+
+func systemPrompt(messages []provider.Message) string {
+	var b strings.Builder
+	for _, m := range messages {
+		if m.Role == "system" {
+			b.WriteString(m.Content)
+			b.WriteByte('\x00')
+		}
+	}
+	return b.String()
+}
+
+func semanticScope(req provider.ChatRequest) string {
+	return req.Model + "\x00" + systemPrompt(req.Messages)
 }

@@ -6,10 +6,11 @@ import (
 )
 
 type ProviderConfig struct {
-	Name    string
-	BaseURL string
-	APIKey  string
-	Model   string
+	Name       string
+	BaseURL    string
+	APIKey     string
+	Model      string
+	EmbedModel string
 }
 
 type Settings struct {
@@ -33,12 +34,14 @@ func Load() (Settings, error) {
 		s.Providers = append(s.Providers, ProviderConfig{
 			Name: "deepseek", BaseURL: getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
 			APIKey: key, Model: getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+			EmbedModel: os.Getenv("DEEPSEEK_EMBED_MODEL"),
 		})
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		s.Providers = append(s.Providers, ProviderConfig{
 			Name: "openai", BaseURL: getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 			APIKey: key, Model: getenv("OPENAI_MODEL", "gpt-4o-mini"),
+			EmbedModel: os.Getenv("OPENAI_EMBED_MODEL"),
 		})
 	}
 	return s, nil
