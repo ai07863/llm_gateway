@@ -14,6 +14,7 @@ import (
 	"llm-gateway/internal/budget"
 	"llm-gateway/internal/cache"
 	"llm-gateway/internal/config"
+	"llm-gateway/internal/metrics"
 	"llm-gateway/internal/pricing"
 	"llm-gateway/internal/provider"
 	"llm-gateway/internal/proxy"
@@ -24,6 +25,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), RequestIDMiddleware())
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+
+	m := metrics.New()
+	r.GET("/metrics", m.Handler())
 
 	v1 := r.Group("/v1", AuthMiddleware(s.GatewayToken))
 
@@ -91,6 +95,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 				_ = semantic.Store(c.Request.Context(), scope, lastUser, resp.Content)
 			}
 			recordUsage(resp, used)
+			m.Requests.WithLabelValues(used.Name(), "200").Inc()
+			m.Tokens.WithLabelValues(used.Name(), "prompt").Add(float64(resp.PromptTokens))
+			m.Tokens.WithLabelValues(used.Name(), "completion").Add(float64(resp.CompletionTokens))
 			return resp, nil
 		},
 		func(c *gin.Context, req provider.ChatRequest) error {
