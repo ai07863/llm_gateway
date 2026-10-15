@@ -40,6 +40,12 @@ func NewRouter(s config.Settings) *gin.Engine {
 	registerAdmin(v1, repo)
 
 	exact := cache.NewExact(10 * time.Minute)
+	var semantic *cache.Semantic
+	if len(providers) > 0 {
+		if emb, ok := providers[0].(provider.Embedder); ok {
+			semantic = cache.NewSemantic(emb, 0.95, 2000)
+		}
+	}
 
 	recordUsage := func(resp provider.ChatResponse, p provider.Provider) {
 		_ = repo.Record(context.Background(), usage.Record{
@@ -58,6 +64,12 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if cached, ok := exact.Get(key); ok {
 				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
 			}
+			lastUser := lastUserMessage(req.Messages)
+			if semantic != nil {
+				if answer, ok := semantic.Lookup(c.Request.Context(), lastUser); ok {
+					return provider.ChatResponse{Model: req.Model, Content: answer}, nil
+				}
+			}
 			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
 			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
 			case budget.Reject:
@@ -73,6 +85,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 				return provider.ChatResponse{}, err
 			}
 			exact.Set(key, resp.Content)
+			if semantic != nil {
+				_ = semantic.Store(c.Request.Context(), lastUser, resp.Content)
+			}
 			recordUsage(resp, used)
 			return resp, nil
 		},
@@ -100,4 +115,13 @@ func NewRouter(s config.Settings) *gin.Engine {
 	)
 
 	return r
+}
+
+func lastUserMessage(messages []provider.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return messages[i].Content
+		}
+	}
+	return ""
 }

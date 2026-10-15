@@ -32,3 +32,7 @@ type Provider interface {
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 	ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error)
 }
+
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float64, error)
+}

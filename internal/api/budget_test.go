@@ -59,9 +59,13 @@ func TestChatBudgetDegradeSwapsModel(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		gotModel, _ = req["model"].(string)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"model":"`+gotModel+`","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			gotModel, _ = req["model"].(string)
+			_, _ = io.WriteString(w, `{"model":"`+gotModel+`","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":[{"embedding":[1,0]}]}`)
 	}))
 	defer upstream.Close()
 

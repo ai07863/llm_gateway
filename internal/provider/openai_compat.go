@@ -75,6 +75,36 @@ func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse,
 	return out, nil
 }
 
+type oaEmbedResponse struct {
+	Data []struct {
+		Embedding []float64 `json:"embedding"`
+	} `json:"data"`
+}
+
+func (p *openAICompat) Embed(ctx context.Context, texts []string) ([][]float64, error) {
+	body, _ := json.Marshal(map[string]any{"model": p.cfg.Model, "input": texts})
+	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/embeddings", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	res, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		return nil, fmt.Errorf("embed status %d", res.StatusCode)
+	}
+	var parsed oaEmbedResponse
+	if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	out := make([][]float64, len(parsed.Data))
+	for i, d := range parsed.Data {
+		out[i] = d.Embedding
+	}
+	return out, nil
+}
+
 func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
 	req.Stream = true
 	body, err := json.Marshal(req)
