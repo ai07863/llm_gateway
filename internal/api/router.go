@@ -2,6 +2,8 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,16 +26,39 @@ func NewRouter(s config.Settings) *gin.Engine {
 		models = append(models, pc.Model)
 	}
 	registerModels(v1, models)
-	registerChat(v1, func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
-		if len(providers) == 0 {
-			return provider.ChatResponse{}, errors.New("no provider configured")
-		}
-		resp, err := providers[0].Chat(c.Request.Context(), req)
-		if err != nil {
-			return provider.ChatResponse{}, err
-		}
-		return resp, nil
-	})
+	registerChat(v1,
+		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
+			if len(providers) == 0 {
+				return provider.ChatResponse{}, errors.New("no provider configured")
+			}
+			resp, err := providers[0].Chat(c.Request.Context(), req)
+			if err != nil {
+				return provider.ChatResponse{}, err
+			}
+			return resp, nil
+		},
+		func(c *gin.Context, req provider.ChatRequest) error {
+			if len(providers) == 0 {
+				return errors.New("no provider configured")
+			}
+			ch, err := providers[0].ChatStream(c.Request.Context(), req)
+			if err != nil {
+				return err
+			}
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Stream(func(w io.Writer) bool {
+				chunk, ok := <-ch
+				if !ok || chunk.Done {
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return false
+				}
+				fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": chunk.Content}}}}))
+				return true
+			})
+			return nil
+		},
+	)
 
 	return r
 }

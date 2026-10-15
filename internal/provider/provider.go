@@ -11,6 +11,12 @@ type ChatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	Temperature *float64  `json:"temperature,omitempty"`
+	Stream      bool      `json:"stream,omitempty"`
+}
+
+type StreamChunk struct {
+	Content string
+	Done    bool
 }
 
 type ChatResponse struct {
@@ -24,4 +30,5 @@ type ChatResponse struct {
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
+	ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error)
 }
