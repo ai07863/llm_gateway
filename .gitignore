@@ -3,3 +3,5 @@
 /server
 /server.exe
 /out/
+__pycache__/
+*.pyc
