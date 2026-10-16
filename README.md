@@ -72,6 +72,14 @@ llm-gateway/
 
 ## 快速开始
 
+### 最快上手（TL;DR）
+
+```bash
+cp configs/.env.example .env              # 填 DEEPSEEK_API_KEY 和自定义 GATEWAY_TOKEN
+docker compose up --build                 # 启动网关，监听 :8080
+pip install openai && python examples/python_openai_client.py   # 跑示例（先设 GATEWAY_TOKEN）
+```
+
 ### 1. 准备配置
 
 ```bash
