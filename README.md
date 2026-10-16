@@ -168,6 +168,48 @@ curl http://localhost:8080/v1/admin/usage -H "Authorization: Bearer change-me"
 - `gateway_request_duration_seconds{provider}`：调用延迟直方图。
 - `gateway_tokens_total{provider,kind}`：按 provider 累计的 prompt / completion token。
 
+## 接入自己的项目
+
+网关是 OpenAI 兼容的，所以任何支持自定义 `base_url` 的客户端都能接入：**base_url 指向网关，api_key 填 `GATEWAY_TOKEN`**。
+
+Python：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8080/v1",   # 指向网关
+    api_key="my-secret-123",               # 即你的 GATEWAY_TOKEN
+)
+
+resp = client.chat.completions.create(
+    model="deepseek-chat",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(resp.choices[0].message.content)
+```
+
+Node.js：
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:8080/v1",
+  apiKey: process.env.GATEWAY_TOKEN,
+});
+
+const resp = await client.chat.completions.create({
+  model: "deepseek-chat",
+  messages: [{ role: "user", content: "你好" }],
+});
+console.log(resp.choices[0].message.content);
+```
+
+完整可运行的最小示例见 [`examples/python_openai_client.py`](examples/python_openai_client.py)。
+
+接入后，你的多个 AI 项目都只需指向这一个网关，无需各自保存 provider 的 key；成本、预算、缓存与故障转移都由网关统一处理。
+
 ## 测试与验收
 
 ```bash
