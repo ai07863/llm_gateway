@@ -151,7 +151,10 @@ func NewRouter(s config.Settings) *gin.Engine {
 				fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": chunk.Content}}}}))
 				return true
 			})
-			if streamErr == nil {
+			// Only cache/record when the stream finished cleanly AND the client
+			// is still connected — a client abort must not poison the cache with
+			// partial content or log a spurious zero-token record.
+			if streamErr == nil && c.Request.Context().Err() == nil {
 				exact.Set(key, content.String())
 				recordUsage(req.Model, used.Name(), prompt, completion)
 				m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())

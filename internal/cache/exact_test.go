@@ -60,3 +60,20 @@ func TestExactCacheExpiry(t *testing.T) {
 		t.Fatal("expected expired")
 	}
 }
+
+func TestExactCacheEvictsOldestWhenFull(t *testing.T) {
+	c := NewExactSized(time.Hour, 2)
+	c.Set("k1", "v1")
+	c.Set("k2", "v2")
+	c.Set("k3", "v3")
+
+	if _, ok := c.Get("k1"); ok {
+		t.Fatal("oldest entry k1 should have been evicted")
+	}
+	if _, ok := c.Get("k2"); !ok {
+		t.Fatal("k2 should still be present")
+	}
+	if _, ok := c.Get("k3"); !ok {
+		t.Fatal("k3 should be present")
+	}
+}

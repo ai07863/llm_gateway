@@ -22,19 +22,14 @@ type openAICompat struct {
 }
 
 func NewOpenAICompat(cfg config.ProviderConfig) Provider {
+	// Clone http.DefaultTransport so we keep its pool tuning and honors
+	// HTTP(S)_PROXY via ProxyFromEnvironment, then bound header latency only.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.ResponseHeaderTimeout = 30 * time.Second
 	return &openAICompat{
-		cfg: cfg,
-		client: &http.Client{
-			Timeout: 60 * time.Second,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: 30 * time.Second,
-			},
-		},
-		streamClient: &http.Client{
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: 30 * time.Second,
-			},
-		},
+		cfg:          cfg,
+		client:       &http.Client{Timeout: 60 * time.Second, Transport: tr},
+		streamClient: &http.Client{Transport: tr.Clone()},
 	}
 }
 

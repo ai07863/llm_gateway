@@ -13,14 +13,26 @@
 <input id="token" placeholder="gateway token" />
 <button onclick="load()">刷新</button>
 <script>
+let chart = null;
 async function load() {
   const token = document.getElementById('token').value;
-  const res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
+  let res;
+  try {
+    res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
+  } catch (e) {
+    alert('无法连接网关：' + e.message);
+    return;
+  }
+  if (!res.ok) {
+    alert('请求失败：HTTP ' + res.status + (res.status === 401 ? '（token 错误或未填）' : ''));
+    return;
+  }
   const data = await res.json();
   document.getElementById('cost').textContent = (data.month_cost || 0).toFixed(3);
   const labels = (data.records || []).map(r => r.created_at || '');
   const costs = (data.records || []).map(r => r.cost || 0);
-  new Chart(document.getElementById('chart'), {
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('chart'), {
     type: 'line',
     data: { labels, datasets: [{ label: '单次成本', data: costs }] },
   });

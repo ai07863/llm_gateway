@@ -17,14 +17,24 @@ type entry struct {
 	expires time.Time
 }
 
+// defaultMaxEntries bounds the exact cache so a long-running gateway does not
+// grow without limit (TTL alone only prevents hits, never reclaims memory).
+const defaultMaxEntries = 5000
+
 type Exact struct {
-	mu  sync.RWMutex
-	ttl time.Duration
-	m   map[string]entry
+	mu    sync.RWMutex
+	ttl   time.Duration
+	max   int
+	m     map[string]entry
+	order []string
 }
 
 func NewExact(ttl time.Duration) *Exact {
-	return &Exact{ttl: ttl, m: make(map[string]entry)}
+	return NewExactSized(ttl, defaultMaxEntries)
+}
+
+func NewExactSized(ttl time.Duration, max int) *Exact {
+	return &Exact{ttl: ttl, max: max, m: make(map[string]entry)}
 }
 
 func (c *Exact) Key(req provider.ChatRequest) string {
@@ -50,5 +60,28 @@ func (c *Exact) Get(key string) (string, bool) {
 func (c *Exact) Set(key, value string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.m[key]; !exists {
+		c.order = append(c.order, key)
+	}
 	c.m[key] = entry{value: value, expires: NowFunc().Add(c.ttl)}
+	c.evictLocked()
+}
+
+// evictLocked drops expired entries, then oldest-inserted entries, until the
+// cache is within its size bound. Caller must hold the write lock.
+func (c *Exact) evictLocked() {
+	if c.max <= 0 {
+		return
+	}
+	now := NowFunc()
+	for k, e := range c.m {
+		if now.After(e.expires) {
+			delete(c.m, k)
+		}
+	}
+	for len(c.m) > c.max && len(c.order) > 0 {
+		oldest := c.order[0]
+		c.order = c.order[1:]
+		delete(c.m, oldest)
+	}
 }
