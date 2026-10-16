@@ -44,6 +44,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 	}
 	registerModels(v1, models)
 	registerAdmin(v1, repo)
+	registerEmbeddings(v1, providers)
 
 	exact := cache.NewExact(10 * time.Minute)
 	var semantic *cache.Semantic
@@ -53,14 +54,14 @@ func NewRouter(s config.Settings) *gin.Engine {
 		}
 	}
 
-	recordUsage := func(resp provider.ChatResponse, p provider.Provider) {
+	recordUsage := func(model, providerName string, promptTokens, completionTokens int) {
 		_ = repo.Record(context.Background(), usage.Record{
 			ID:               newRequestID(),
-			Model:            resp.Model,
-			Provider:         p.Name(),
-			PromptTokens:     resp.PromptTokens,
-			CompletionTokens: resp.CompletionTokens,
-			Cost:             pricing.Cost(resp.Model, resp.PromptTokens, resp.CompletionTokens),
+			Model:            model,
+			Provider:         providerName,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			Cost:             pricing.Cost(model, promptTokens, completionTokens),
 		})
 	}
 
@@ -96,7 +97,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if semantic != nil {
 				_ = semantic.Store(c.Request.Context(), scope, lastUser, resp.Content)
 			}
-			recordUsage(resp, used)
+			recordUsage(resp.Model, used.Name(), resp.PromptTokens, resp.CompletionTokens)
 			m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
 			m.Requests.WithLabelValues(used.Name(), "200").Inc()
 			m.Tokens.WithLabelValues(used.Name(), "prompt").Add(float64(resp.PromptTokens))
@@ -104,29 +105,75 @@ func NewRouter(s config.Settings) *gin.Engine {
 			return resp, nil
 		},
 		func(c *gin.Context, req provider.ChatRequest) error {
+			key := exact.Key(req)
+			if cached, ok := exact.Get(key); ok {
+				writeSSEChunk(c, cached)
+				return nil
+			}
+			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
+			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
+			case budget.Reject:
+				return &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
+			case budget.Degrade:
+				req.Model = budget.CheaperModel(req.Model)
+			}
 			if len(providers) == 0 {
 				return errors.New("no provider configured")
 			}
-			ch, _, err := proxy.StreamWithFailover(c.Request.Context(), providers, req)
+			start := time.Now()
+			ch, used, err := proxy.StreamWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
 				return err
 			}
 			c.Header("Content-Type", "text/event-stream")
 			c.Header("Cache-Control", "no-cache")
+			var prompt, completion int
+			var streamErr error
+			var content strings.Builder
 			c.Stream(func(w io.Writer) bool {
 				chunk, ok := <-ch
-				if !ok || chunk.Done {
+				if !ok {
 					fmt.Fprint(w, "data: [DONE]\n\n")
 					return false
 				}
+				if chunk.Err != nil {
+					streamErr = chunk.Err
+					fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"error": gin.H{"message": chunk.Err.Error()}}))
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return false
+				}
+				if chunk.Done {
+					prompt, completion = chunk.PromptTokens, chunk.CompletionTokens
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return false
+				}
+				content.WriteString(chunk.Content)
 				fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": chunk.Content}}}}))
 				return true
 			})
+			if streamErr == nil {
+				exact.Set(key, content.String())
+				recordUsage(req.Model, used.Name(), prompt, completion)
+				m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
+				m.Requests.WithLabelValues(used.Name(), "200").Inc()
+				m.Tokens.WithLabelValues(used.Name(), "prompt").Add(float64(prompt))
+				m.Tokens.WithLabelValues(used.Name(), "completion").Add(float64(completion))
+			}
 			return nil
 		},
 	)
 
 	return r
+}
+
+func writeSSEChunk(c *gin.Context, content string) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Stream(func(w io.Writer) bool {
+		fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": content}}}}))
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		return false
+	})
 }
 
 func lastUserMessage(messages []provider.Message) string {

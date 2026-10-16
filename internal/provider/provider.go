@@ -15,8 +15,12 @@ type ChatRequest struct {
 }
 
 type StreamChunk struct {
-	Content string
-	Done    bool
+	Content          string
+	Done             bool
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	Err              error
 }
 
 type ChatResponse struct {

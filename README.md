@@ -15,7 +15,7 @@
 
 ## 功能特性
 
-- **OpenAI 兼容 API**：`POST /v1/chat/completions`（支持 SSE 流式）、`GET /v1/models`。
+- **OpenAI 兼容 API**：`POST /v1/chat/completions`（支持 SSE 流式）、`POST /v1/embeddings`、`GET /v1/models`。
 - **多 provider 转发 + 故障转移**：主 provider 失败后自动切换到备用 provider，全部失败返回 `502`。
 - **成本 / Token 落库**：每次调用写入 SQLite，可通过 `/v1/admin/usage` 查询历史用量与当月成本。
 - **预算护栏**：当月花费接近上限时**降级**到便宜模型，超上限时**拒绝**（`429`）。
@@ -103,7 +103,7 @@ docker compose up --build
 go run ./cmd/server
 ```
 
-环境变量来自 `.env` 或直接从 shell 注入（`GATEWAY_TOKEN`、`DB_PATH`、`*_API_KEY` 等）。
+配置全部来自环境变量（`GATEWAY_TOKEN`、`DB_PATH`、`*_API_KEY` 等）。启动时若当前工作目录存在 `.env`，会被自动加载；不存在则直接从 shell 环境读取。当前**不**支持 YAML 配置文件（`configs/config.yaml` 尚未实现）。
 
 ## API 示例
 
@@ -139,6 +139,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/v1/chat/completions` | 对话补全（`stream: true` 时走 SSE） |
+| POST | `/v1/embeddings` | 文本向量化（`input` 可以是字符串或字符串数组） |
 | GET | `/v1/models` | 列出已配置的模型 |
 | GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost` + 最近记录 `records` |
 | GET | `/metrics` | Prometheus 指标 |

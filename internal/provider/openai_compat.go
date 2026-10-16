@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"llm-gateway/internal/config"
 )
@@ -19,7 +21,15 @@ type openAICompat struct {
 }
 
 func NewOpenAICompat(cfg config.ProviderConfig) Provider {
-	return &openAICompat{cfg: cfg, client: &http.Client{}}
+	return &openAICompat{
+		cfg: cfg,
+		client: &http.Client{
+			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		},
+	}
 }
 
 func (p *openAICompat) Name() string { return p.cfg.Name }
@@ -116,7 +126,13 @@ func (p *openAICompat) Embed(ctx context.Context, texts []string) ([][]float64, 
 
 func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
 	req.Stream = true
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(struct {
+		ChatRequest
+		StreamOptions map[string]bool `json:"stream_options,omitempty"`
+	}{
+		ChatRequest:   req,
+		StreamOptions: map[string]bool{"include_usage": true},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +164,8 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 				return false
 			}
 		}
+		var prompt, completion, total int
+		sawDone := false
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
@@ -157,8 +175,8 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			}
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if payload == "[DONE]" {
-				send(StreamChunk{Done: true})
-				return
+				sawDone = true
+				break
 			}
 			var parsed struct {
 				Choices []struct {
@@ -166,9 +184,17 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 						Content string `json:"content"`
 					} `json:"delta"`
 				} `json:"choices"`
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
 				continue
+			}
+			if parsed.Usage.PromptTokens != 0 || parsed.Usage.CompletionTokens != 0 || parsed.Usage.TotalTokens != 0 {
+				prompt, completion, total = parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, parsed.Usage.TotalTokens
 			}
 			if len(parsed.Choices) > 0 && parsed.Choices[0].Delta.Content != "" {
 				if !send(StreamChunk{Content: parsed.Choices[0].Delta.Content}) {
@@ -176,6 +202,15 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			send(StreamChunk{Done: true, Err: err, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
+			return
+		}
+		if !sawDone {
+			send(StreamChunk{Done: true, Err: errors.New("upstream stream ended without [DONE]"), PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
+			return
+		}
+		send(StreamChunk{Done: true, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
 	}()
 	return ch, nil
 }

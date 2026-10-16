@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 type ProviderConfig struct {
@@ -23,6 +25,7 @@ type Settings struct {
 }
 
 func Load() (Settings, error) {
+	_ = godotenv.Load()
 	s := Settings{
 		GatewayToken:       os.Getenv("GATEWAY_TOKEN"),
 		ListenAddr:         getenv("LISTEN_ADDR", ":8080"),

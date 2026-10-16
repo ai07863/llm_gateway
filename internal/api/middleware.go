@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,8 +29,4 @@ func RequestIDMiddleware() gin.HandlerFunc {
 		c.Header("X-Request-ID", id)
 		c.Next()
 	}
-}
-
-func strings_HasPrefixFold(s, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
