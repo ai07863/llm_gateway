@@ -16,8 +16,9 @@ import (
 )
 
 type openAICompat struct {
-	cfg    config.ProviderConfig
-	client *http.Client
+	cfg          config.ProviderConfig
+	client       *http.Client
+	streamClient *http.Client
 }
 
 func NewOpenAICompat(cfg config.ProviderConfig) Provider {
@@ -25,6 +26,11 @@ func NewOpenAICompat(cfg config.ProviderConfig) Provider {
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		},
+		streamClient: &http.Client{
 			Transport: &http.Transport{
 				ResponseHeaderTimeout: 30 * time.Second,
 			},
@@ -142,7 +148,7 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-	res, err := p.client.Do(httpReq)
+	res, err := p.streamClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"llm-gateway/internal/config"
 )
@@ -109,7 +110,7 @@ func (e *errAfterReader) Close() error { return nil }
 
 func TestOpenAICompatChatStreamEmitsErrorOnScannerFailure(t *testing.T) {
 	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: "http://fake", APIKey: "k", Model: "m"}).(*openAICompat)
-	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	p.streamClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -134,3 +135,52 @@ func TestOpenAICompatChatStreamEmitsErrorOnScannerFailure(t *testing.T) {
 }
 
 var _ io.Closer = (*errAfterReader)(nil)
+
+func TestNewOpenAICompatStreamClientHasNoOverallTimeout(t *testing.T) {
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake"}).(*openAICompat)
+	if p.client.Timeout != 60*time.Second {
+		t.Fatalf("non-stream client want 60s timeout, got %v", p.client.Timeout)
+	}
+	if p.streamClient.Timeout != 0 {
+		t.Fatalf("stream client must have no overall timeout, got %v", p.streamClient.Timeout)
+	}
+}
+
+func TestOpenAICompatChatStreamNotBoundedByClientTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
+		flusher.Flush()
+		time.Sleep(250 * time.Millisecond)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"second\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(*openAICompat)
+	// Short analogue of the 60s non-stream timeout: if ChatStream used p.client,
+	// the stream would be truncated ~50ms in (before the second chunk).
+	p.client.Timeout = 50 * time.Millisecond
+
+	ch, err := p.ChatStream(context.Background(), ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	var sb strings.Builder
+	var terminal StreamChunk
+	for c := range ch {
+		if c.Done {
+			terminal = c
+			continue
+		}
+		sb.WriteString(c.Content)
+	}
+	if terminal.Err != nil {
+		t.Fatalf("long stream must not be cut by the non-stream client timeout, got error: %v", terminal.Err)
+	}
+	if sb.String() != "firstsecond" {
+		t.Fatalf("want 'firstsecond', got %q", sb.String())
+	}
+}

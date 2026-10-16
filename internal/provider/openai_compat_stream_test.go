@@ -85,7 +85,7 @@ func TestOpenAICompatChatStreamClosesOnContextCancel(t *testing.T) {
 
 	bodyClosed := make(chan struct{})
 	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(*openAICompat)
-	p.client = &http.Client{Transport: &closeRecorderTransport{base: http.DefaultTransport, closeSig: bodyClosed}}
+	p.streamClient = &http.Client{Transport: &closeRecorderTransport{base: http.DefaultTransport, closeSig: bodyClosed}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
