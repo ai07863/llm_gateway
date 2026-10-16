@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>LLM Gateway 用量看板</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <h1>LLM Gateway</h1>
@@ -31,6 +31,10 @@ async function load() {
   document.getElementById('cost').textContent = (data.month_cost || 0).toFixed(3);
   const labels = (data.records || []).map(r => r.created_at || '');
   const costs = (data.records || []).map(r => r.cost || 0);
+  if (typeof Chart === 'undefined') {
+    alert('图表库未加载（可能离线），仅显示花费数值。');
+    return;
+  }
   if (chart) chart.destroy();
   chart = new Chart(document.getElementById('chart'), {
     type: 'line',

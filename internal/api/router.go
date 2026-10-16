@@ -69,33 +69,41 @@ func NewRouter(s config.Settings) *gin.Engine {
 		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
+				m.Requests.WithLabelValues("cache", "hit").Inc()
 				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
 			}
 			lastUser := lastUserMessage(req.Messages)
 			scope := semanticScope(req)
+			var semanticVec []float64
 			if semantic != nil {
-				if answer, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
+				if answer, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
+					m.Requests.WithLabelValues("cache", "hit").Inc()
 					return provider.ChatResponse{Model: req.Model, Content: answer}, nil
+				} else {
+					semanticVec = vec
 				}
 			}
 			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
 			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
 			case budget.Reject:
+				m.Requests.WithLabelValues("budget", "429").Inc()
 				return provider.ChatResponse{}, &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
 			case budget.Degrade:
 				req.Model = budget.CheaperModel(req.Model)
 			}
 			if len(providers) == 0 {
+				m.Requests.WithLabelValues("none", "502").Inc()
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
 			start := time.Now()
 			resp, used, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
+				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return provider.ChatResponse{}, err
 			}
 			exact.Set(key, resp.Content)
 			if semantic != nil {
-				_ = semantic.Store(c.Request.Context(), scope, lastUser, resp.Content)
+				_ = semantic.Store(scope, semanticVec, resp.Content)
 			}
 			recordUsage(resp.Model, used.Name(), resp.PromptTokens, resp.CompletionTokens)
 			m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
@@ -107,22 +115,26 @@ func NewRouter(s config.Settings) *gin.Engine {
 		func(c *gin.Context, req provider.ChatRequest) error {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
+				m.Requests.WithLabelValues("cache", "hit").Inc()
 				writeSSEChunk(c, cached)
 				return nil
 			}
 			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
 			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
 			case budget.Reject:
+				m.Requests.WithLabelValues("budget", "429").Inc()
 				return &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
 			case budget.Degrade:
 				req.Model = budget.CheaperModel(req.Model)
 			}
 			if len(providers) == 0 {
+				m.Requests.WithLabelValues("none", "502").Inc()
 				return errors.New("no provider configured")
 			}
 			start := time.Now()
 			ch, used, err := proxy.StreamWithFailover(c.Request.Context(), providers, req)
 			if err != nil {
+				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return err
 			}
 			c.Header("Content-Type", "text/event-stream")
@@ -154,7 +166,12 @@ func NewRouter(s config.Settings) *gin.Engine {
 			// Only cache/record when the stream finished cleanly AND the client
 			// is still connected — a client abort must not poison the cache with
 			// partial content or log a spurious zero-token record.
-			if streamErr == nil && c.Request.Context().Err() == nil {
+			switch {
+			case streamErr != nil:
+				m.Requests.WithLabelValues(used.Name(), "500").Inc()
+			case c.Request.Context().Err() != nil:
+				m.Requests.WithLabelValues(used.Name(), "canceled").Inc()
+			default:
 				exact.Set(key, content.String())
 				recordUsage(req.Model, used.Name(), prompt, completion)
 				m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
