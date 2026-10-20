@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>LLM Gateway 用量看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<h1>LLM Gateway</h1>
+<p>本月花费：<span id="cost">-</span> 元</p>
+<canvas id="chart" height="120"></canvas>
+<p>请先填入网关 token 后点击刷新：</p>
+<input id="token" placeholder="gateway token" />
+<button onclick="load()">刷新</button>
+<script>
+let chart = null;
+async function load() {
+  const token = document.getElementById('token').value;
+  let res;
+  try {
+    res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
+  } catch (e) {
+    alert('无法连接网关：' + e.message);
+    return;
+  }
+  if (!res.ok) {
+    alert('请求失败：HTTP ' + res.status + (res.status === 401 ? '（token 错误或未填）' : ''));
+    return;
+  }
+  const data = await res.json();
+  document.getElementById('cost').textContent = (data.month_cost || 0).toFixed(3);
+  const labels = (data.records || []).map(r => r.created_at || '');
+  const costs = (data.records || []).map(r => r.cost || 0);
+  if (typeof Chart === 'undefined') {
+    alert('图表库未加载（可能离线），仅显示花费数值。');
+    return;
+  }
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: '单次成本', data: costs }] },
+  });
+}
+</script>
+</body>
+</html>
