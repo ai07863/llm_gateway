@@ -63,12 +63,12 @@ func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse,
 
 	res, err := p.client.Do(httpReq)
 	if err != nil {
-		return ChatResponse{}, err
+		return ChatResponse{}, NewNetworkError(p.cfg.Name, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 400 {
 		b, _ := io.ReadAll(res.Body)
-		return ChatResponse{}, fmt.Errorf("provider %s status %d: %s", p.cfg.Name, res.StatusCode, string(b))
+		return ChatResponse{}, NewStatusError(p.cfg.Name, res.StatusCode, string(b))
 	}
 	var parsed oaChatResponse
 	if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
@@ -108,11 +108,11 @@ func (p *openAICompat) Embed(ctx context.Context, texts []string) ([][]float64, 
 	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	res, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, NewNetworkError(p.cfg.Name, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 400 {
-		return nil, fmt.Errorf("embed status %d", res.StatusCode)
+		return nil, NewStatusError(p.cfg.Name, res.StatusCode, "")
 	}
 	var parsed oaEmbedResponse
 	if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
@@ -145,12 +145,12 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 	httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	res, err := p.streamClient.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, NewNetworkError(p.cfg.Name, err)
 	}
 	if res.StatusCode >= 400 {
 		b, _ := io.ReadAll(res.Body)
 		res.Body.Close()
-		return nil, fmt.Errorf("provider %s status %d: %s", p.cfg.Name, res.StatusCode, string(b))
+		return nil, NewStatusError(p.cfg.Name, res.StatusCode, string(b))
 	}
 
 	ch := make(chan StreamChunk)
