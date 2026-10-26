@@ -16,10 +16,10 @@
 ## 功能特性
 
 - **OpenAI 兼容 API**：`POST /v1/chat/completions`（支持 SSE 流式）、`POST /v1/embeddings`、`GET /v1/models`。
-- **多 provider 转发 + 故障转移**：主 provider 失败后自动切换到备用 provider，全部失败返回 `502`。
+- **多 provider 转发 + 故障转移**：主 provider 遇到**可重试错误**（网络 / 超时 / 5xx / 429）时，先在**同一 provider** 上做指数退避重试（默认 3 次），仍失败才切换到备用 provider；备用 provider 使用**其自身配置的模型**；**不可重试错误**（其它 4xx）直接返回，不切换；全部失败返回 `502`。
 - **成本 / Token 落库**：每次调用写入 SQLite，可通过 `/v1/admin/usage` 查询历史用量与当月成本。
-- **预算护栏**：当月花费接近上限时**降级**到便宜模型，超上限时**拒绝**（`429`）。
-- **降本缓存**：精确缓存（request hash）+ 语义缓存（embedding 余弦相似度）。
+- **预算护栏**：当月花费接近上限时**降级**到便宜模型，超上限时**拒绝**（`429`）；降级只在存在**更便宜的、已配置的模型**时发生，否则保持原模型不变。
+- **降本缓存**：精确缓存（request hash）+ 语义缓存（embedding 余弦相似度）；命中会写入用量记录（`cache_hit=true`）并按**原模型价格**计算 `saved_cost`，`/v1/admin/usage` 返回 `month_saved`。
 - **可观测**：Prometheus `/metrics` + 极简用量看板页 `/`。
 - **固定 token 鉴权**：防止网关裸奔，`Authorization: Bearer <GATEWAY_TOKEN>`。
 
@@ -149,7 +149,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 | POST | `/v1/chat/completions` | 对话补全（`stream: true` 时走 SSE） |
 | POST | `/v1/embeddings` | 文本向量化（`input` 可以是字符串或字符串数组） |
 | GET | `/v1/models` | 列出已配置的模型 |
-| GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost` + 最近记录 `records` |
+| GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost`、当月节省 `month_saved` + 最近记录 `records` |
 | GET | `/metrics` | Prometheus 指标 |
 | GET | `/` | 极简用量看板页 |
 | GET | `/healthz` | 健康检查 |
@@ -163,9 +163,11 @@ curl http://localhost:8080/v1/admin/usage -H "Authorization: Bearer change-me"
 ```json
 {
   "month_cost": 0.0123,
+  "month_saved": 0.0004,
   "records": [
-    {"id": "...", "model": "deepseek-chat", "provider": "deepseek",
-     "prompt_tokens": 20, "completion_tokens": 40, "cost": 0.00003, "created_at": "..."}
+    {"id": "...", "model": "deepseek-chat", "provider": "cache",
+     "prompt_tokens": 20, "completion_tokens": 40, "cost": 0, "saved_cost": 0.00003,
+     "cache_hit": true, "created_at": "..."}
   ]
 }
 ```
