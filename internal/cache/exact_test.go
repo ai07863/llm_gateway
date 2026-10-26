@@ -15,9 +15,10 @@ func TestExactCacheHitAndMiss(t *testing.T) {
 	if _, ok := c.Get(key); ok {
 		t.Fatal("expected miss")
 	}
-	c.Set(key, "answer")
-	if v, ok := c.Get(key); !ok || v != "answer" {
-		t.Fatalf("expected hit 'answer', got %q %v", v, ok)
+	c.Set(key, CachedResult{Content: "answer", PromptTokens: 10, CompletionTokens: 20})
+	got, ok := c.Get(key)
+	if !ok || got.Content != "answer" || got.PromptTokens != 10 || got.CompletionTokens != 20 {
+		t.Fatalf("expected hit with tokens, got %+v %v", got, ok)
 	}
 }
 
@@ -38,12 +39,12 @@ func TestExactCacheKeyDistinguishesTemperature(t *testing.T) {
 		t.Fatal("keys for different temperatures must differ")
 	}
 
-	c.Set(keyZero, "zero-answer")
+	c.Set(keyZero, CachedResult{Content: "zero-answer"})
 	if _, ok := c.Get(keyOne); ok {
 		t.Fatal("value cached under temperature=0 must not be returned for temperature=1")
 	}
-	if v, ok := c.Get(keyZero); !ok || v != "zero-answer" {
-		t.Fatalf("expected hit 'zero-answer', got %q %v", v, ok)
+	if got, ok := c.Get(keyZero); !ok || got.Content != "zero-answer" {
+		t.Fatalf("expected hit 'zero-answer', got %+v %v", got, ok)
 	}
 }
 
@@ -54,7 +55,7 @@ func TestExactCacheExpiry(t *testing.T) {
 
 	c := NewExact(time.Second)
 	key := "k"
-	c.Set(key, "v")
+	c.Set(key, CachedResult{Content: "v"})
 	now = now.Add(2 * time.Second)
 	if _, ok := c.Get(key); ok {
 		t.Fatal("expected expired")
@@ -63,9 +64,9 @@ func TestExactCacheExpiry(t *testing.T) {
 
 func TestExactCacheEvictsOldestWhenFull(t *testing.T) {
 	c := NewExactSized(time.Hour, 2)
-	c.Set("k1", "v1")
-	c.Set("k2", "v2")
-	c.Set("k3", "v3")
+	c.Set("k1", CachedResult{Content: "v1"})
+	c.Set("k2", CachedResult{Content: "v2"})
+	c.Set("k3", CachedResult{Content: "v3"})
 
 	if _, ok := c.Get("k1"); ok {
 		t.Fatal("oldest entry k1 should have been evicted")

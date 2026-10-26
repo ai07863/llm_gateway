@@ -12,8 +12,16 @@ import (
 
 var NowFunc = time.Now
 
+// CachedResult carries the cached completion together with the token counts
+// that produced it, so a cache hit can still be attributed to cost savings.
+type CachedResult struct {
+	Content          string
+	PromptTokens     int
+	CompletionTokens int
+}
+
 type entry struct {
-	value   string
+	res     CachedResult
 	expires time.Time
 }
 
@@ -47,23 +55,23 @@ func (c *Exact) Key(req provider.ChatRequest) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *Exact) Get(key string) (string, bool) {
+func (c *Exact) Get(key string) (CachedResult, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	e, ok := c.m[key]
 	if !ok || NowFunc().After(e.expires) {
-		return "", false
+		return CachedResult{}, false
 	}
-	return e.value, true
+	return e.res, true
 }
 
-func (c *Exact) Set(key, value string) {
+func (c *Exact) Set(key string, res CachedResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, exists := c.m[key]; !exists {
 		c.order = append(c.order, key)
 	}
-	c.m[key] = entry{value: value, expires: NowFunc().Add(c.ttl)}
+	c.m[key] = entry{res: res, expires: NowFunc().Add(c.ttl)}
 	c.evictLocked()
 }
 

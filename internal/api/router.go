@@ -70,15 +70,15 @@ func NewRouter(s config.Settings) *gin.Engine {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
 				m.Requests.WithLabelValues("cache", "hit").Inc()
-				return provider.ChatResponse{Model: req.Model, Content: cached}, nil
+				return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens}, nil
 			}
 			lastUser := lastUserMessage(req.Messages)
 			scope := semanticScope(req)
 			var semanticVec []float64
 			if semantic != nil {
-				if answer, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
+				if hit, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
 					m.Requests.WithLabelValues("cache", "hit").Inc()
-					return provider.ChatResponse{Model: req.Model, Content: answer}, nil
+					return provider.ChatResponse{Model: req.Model, Content: hit.Content, PromptTokens: hit.PromptTokens, CompletionTokens: hit.CompletionTokens}, nil
 				} else {
 					semanticVec = vec
 				}
@@ -101,9 +101,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return provider.ChatResponse{}, err
 			}
-			exact.Set(key, resp.Content)
+			exact.Set(key, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
 			if semantic != nil {
-				_ = semantic.Store(scope, semanticVec, resp.Content)
+				_ = semantic.Store(scope, semanticVec, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
 			}
 			recordUsage(resp.Model, used.Name(), resp.PromptTokens, resp.CompletionTokens)
 			m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
@@ -116,7 +116,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
 				m.Requests.WithLabelValues("cache", "hit").Inc()
-				writeSSEChunk(c, cached)
+				writeSSEChunk(c, cached.Content)
 				return nil
 			}
 			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
@@ -172,7 +172,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			case c.Request.Context().Err() != nil:
 				m.Requests.WithLabelValues(used.Name(), "canceled").Inc()
 			default:
-				exact.Set(key, content.String())
+				exact.Set(key, cache.CachedResult{Content: content.String(), PromptTokens: prompt, CompletionTokens: completion})
 				recordUsage(req.Model, used.Name(), prompt, completion)
 				m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
 				m.Requests.WithLabelValues(used.Name(), "200").Inc()
