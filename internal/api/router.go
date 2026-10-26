@@ -106,7 +106,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if cached, ok := exact.Get(key); ok {
 				m.Requests.WithLabelValues("cache", "hit").Inc()
 				recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
-				return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens}, nil
+				return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens, TotalTokens: cached.PromptTokens + cached.CompletionTokens}, nil
 			}
 			lastUser := lastUserMessage(req.Messages)
 			scope := semanticScope(req)
@@ -115,7 +115,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 				if hit, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
 					m.Requests.WithLabelValues("cache", "hit").Inc()
 					recordCacheHit(req.Model, hit.PromptTokens, hit.CompletionTokens)
-					return provider.ChatResponse{Model: req.Model, Content: hit.Content, PromptTokens: hit.PromptTokens, CompletionTokens: hit.CompletionTokens}, nil
+					return provider.ChatResponse{Model: req.Model, Content: hit.Content, PromptTokens: hit.PromptTokens, CompletionTokens: hit.CompletionTokens, TotalTokens: hit.PromptTokens + hit.CompletionTokens}, nil
 				} else {
 					semanticVec = vec
 				}

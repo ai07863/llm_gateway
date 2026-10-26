@@ -71,13 +71,17 @@ func StreamWithFailover(ctx context.Context, targets []Target, req provider.Chat
 func doWithRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 	var zero T
 	var lastErr error
-	for attempt := 0; attempt < MaxAttempts; attempt++ {
+	attempts := MaxAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
 		v, err := fn()
 		if err == nil {
 			return v, nil
 		}
 		lastErr = err
-		if !provider.IsRetryable(err) || attempt == MaxAttempts-1 {
+		if !provider.IsRetryable(err) || attempt == attempts-1 {
 			break
 		}
 		select {

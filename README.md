@@ -233,7 +233,7 @@ go test ./...
 
 1. `docker compose up --build`，`curl /healthz` 返回 `{"status":"ok"}`。
 2. 用真实 key 发一次非流式 + 一次流式请求，确认有回复。
-3. 访问 `/v1/admin/usage`，确认出现用量记录与当月成本。
+3. 访问 `/v1/admin/usage`，确认出现用量记录与当月成本；重复发一次相同请求触发缓存命中，确认用量记录出现 `cache_hit=true`（且 `saved_cost` / `month_saved` 大于 0）。
 4. 访问 `/metrics`，确认 `gateway_requests_total` 等指标有数。
 5. 打开 `/`，确认看板能出图。
 

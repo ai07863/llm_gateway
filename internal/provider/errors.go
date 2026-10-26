@@ -40,7 +40,7 @@ func IsRetryable(err error) bool {
 	}
 	var pe *Error
 	if errors.As(err, &pe) {
-		return pe.Retryable
+		return pe != nil && pe.Retryable
 	}
 	return true
 }

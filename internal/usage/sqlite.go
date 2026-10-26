@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -27,8 +28,13 @@ func NewSQLite(path string) (Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Legacy databases predate saved_cost; add the column if missing.
-	_, _ = db.Exec(`ALTER TABLE usage_records ADD COLUMN saved_cost REAL`)
+	// Legacy databases predate saved_cost; add the column if missing. A
+	// duplicate-column error is the expected outcome on fresh/current tables;
+	// any other failure must not be silently swallowed.
+	if _, err := db.Exec(`ALTER TABLE usage_records ADD COLUMN saved_cost REAL`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return nil, err
+	}
 	return &sqliteRepo{db: db}, nil
 }
 
