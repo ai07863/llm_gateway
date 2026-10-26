@@ -22,11 +22,26 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
-func TestCheaperModel(t *testing.T) {
-	if CheaperModel("gpt-4o-mini") != "deepseek-chat" {
-		t.Fatal("gpt-4o-mini should degrade to deepseek-chat")
+func TestCheaperModelPicksCheapestConfigured(t *testing.T) {
+	cands := []Model{{Name: "deepseek-chat", Price: 1.37}, {Name: "gpt-4o-mini", Price: 5.5}}
+	if got := CheaperModel("gpt-4o-mini", 5.5, cands); got != "deepseek-chat" {
+		t.Fatalf("want deepseek-chat, got %q", got)
 	}
-	if CheaperModel("deepseek-chat") != "deepseek-chat" {
-		t.Fatal("already cheapest stays same")
+	if got := CheaperModel("deepseek-chat", 1.37, cands); got != "deepseek-chat" {
+		t.Fatalf("already cheapest stays same, got %q", got)
+	}
+}
+
+func TestCheaperModelUnknownCurrentDoesNotDegrade(t *testing.T) {
+	cands := []Model{{Name: "deepseek-chat", Price: 1.37}}
+	if got := CheaperModel("mystery", 0, cands); got != "mystery" {
+		t.Fatalf("unknown current price must not degrade, got %q", got)
+	}
+}
+
+func TestCheaperModelNoCheaperCandidateStays(t *testing.T) {
+	cands := []Model{{Name: "gpt-4o-mini", Price: 5.5}}
+	if got := CheaperModel("gpt-4o-mini", 5.5, cands); got != "gpt-4o-mini" {
+		t.Fatalf("no cheaper configured model must not change, got %q", got)
 	}
 }

@@ -143,7 +143,10 @@ func TestChatStreamBudgetDegradeSwapsModel(t *testing.T) {
 		DBPath:             db,
 		BudgetMonthlyLimit: 10,
 		BudgetSoftRatio:    0.5,
-		Providers:          []config.ProviderConfig{{Name: "up", BaseURL: upstream.URL, APIKey: "k", Model: "gpt-4o-mini"}},
+		Providers: []config.ProviderConfig{
+			{Name: "deepseek", BaseURL: upstream.URL, APIKey: "k", Model: "deepseek-chat"},
+			{Name: "openai", BaseURL: upstream.URL, APIKey: "k", Model: "gpt-4o-mini"},
+		},
 	}
 	r := NewRouter(s)
 

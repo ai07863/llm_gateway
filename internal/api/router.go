@@ -34,9 +34,13 @@ func NewRouter(s config.Settings) *gin.Engine {
 
 	providers := make([]provider.Provider, 0, len(s.Providers))
 	models := make([]string, 0, len(s.Providers))
+	modelCandidates := make([]budget.Model, 0, len(s.Providers))
 	for _, pc := range s.Providers {
 		providers = append(providers, provider.NewOpenAICompat(pc))
 		models = append(models, pc.Model)
+		if score, ok := pricing.Score(pc.Model); ok {
+			modelCandidates = append(modelCandidates, budget.Model{Name: pc.Model, Price: score})
+		}
 	}
 	repo, err := usage.NewSQLite(s.DBPath)
 	if err != nil {
@@ -89,7 +93,8 @@ func NewRouter(s config.Settings) *gin.Engine {
 				m.Requests.WithLabelValues("budget", "429").Inc()
 				return provider.ChatResponse{}, &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
 			case budget.Degrade:
-				req.Model = budget.CheaperModel(req.Model)
+				score, _ := pricing.Score(req.Model)
+				req.Model = budget.CheaperModel(req.Model, score, modelCandidates)
 			}
 			if len(providers) == 0 {
 				m.Requests.WithLabelValues("none", "502").Inc()
@@ -125,7 +130,8 @@ func NewRouter(s config.Settings) *gin.Engine {
 				m.Requests.WithLabelValues("budget", "429").Inc()
 				return &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
 			case budget.Degrade:
-				req.Model = budget.CheaperModel(req.Model)
+				score, _ := pricing.Score(req.Model)
+				req.Model = budget.CheaperModel(req.Model, score, modelCandidates)
 			}
 			if len(providers) == 0 {
 				m.Requests.WithLabelValues("none", "502").Inc()

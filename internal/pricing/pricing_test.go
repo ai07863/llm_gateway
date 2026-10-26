@@ -16,3 +16,13 @@ func TestCostUnknownModelFallsBack(t *testing.T) {
 		t.Fatal("unknown model should cost 0")
 	}
 }
+
+func TestScore(t *testing.T) {
+	s, ok := Score("deepseek-chat")
+	if !ok || s < 1.36 || s > 1.38 {
+		t.Fatalf("want deepseek-chat score ~1.37, got %v %v", s, ok)
+	}
+	if _, ok := Score("nope"); ok {
+		t.Fatal("unknown model must report not-found")
+	}
+}

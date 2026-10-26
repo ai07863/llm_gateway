@@ -23,15 +23,26 @@ func Evaluate(monthlyCost, limit, softRatio float64) Decision {
 	}
 }
 
-var cheaper = map[string]string{
-	"gpt-4o":        "deepseek-chat",
-	"gpt-4o-mini":   "deepseek-chat",
-	"deepseek-chat": "deepseek-chat",
+type Model struct {
+	Name  string
+	Price float64
 }
 
-func CheaperModel(model string) string {
-	if m, ok := cheaper[model]; ok {
-		return m
+func CheaperModel(current string, currentPrice float64, candidates []Model) string {
+	if currentPrice <= 0 {
+		return current
 	}
-	return model
+	bestName, bestPrice := "", 0.0
+	for _, m := range candidates {
+		if m.Price <= 0 || m.Name == current {
+			continue
+		}
+		if bestName == "" || m.Price < bestPrice {
+			bestName, bestPrice = m.Name, m.Price
+		}
+	}
+	if bestName != "" && bestPrice < currentPrice {
+		return bestName
+	}
+	return current
 }
