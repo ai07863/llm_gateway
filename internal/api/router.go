@@ -69,6 +69,24 @@ func NewRouter(s config.Settings) *gin.Engine {
 		})
 	}
 
+	targetsForModel := func(model string) []proxy.Target {
+		var owners, others []proxy.Target
+		for i, pc := range s.Providers {
+			if pc.Model == model {
+				owners = append(owners, proxy.Target{Provider: providers[i], Model: model})
+			} else {
+				others = append(others, proxy.Target{Provider: providers[i], Model: pc.Model})
+			}
+		}
+		if len(owners) > 0 {
+			return append(owners, others...)
+		}
+		if len(providers) == 0 {
+			return nil
+		}
+		return append([]proxy.Target{{Provider: providers[0], Model: model}}, others...)
+	}
+
 	registerChat(v1,
 		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
 			key := exact.Key(req)
@@ -101,7 +119,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 				return provider.ChatResponse{}, errors.New("no provider configured")
 			}
 			start := time.Now()
-			resp, used, err := proxy.ChatWithFailover(c.Request.Context(), providers, req)
+			resp, used, err := proxy.ChatWithFailover(c.Request.Context(), targetsForModel(req.Model), req)
 			if err != nil {
 				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return provider.ChatResponse{}, err
@@ -138,7 +156,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 				return errors.New("no provider configured")
 			}
 			start := time.Now()
-			ch, used, err := proxy.StreamWithFailover(c.Request.Context(), providers, req)
+			ch, used, err := proxy.StreamWithFailover(c.Request.Context(), targetsForModel(req.Model), req)
 			if err != nil {
 				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return err
