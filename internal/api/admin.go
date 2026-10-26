@@ -16,6 +16,7 @@ func registerAdmin(v1 *gin.RouterGroup, repo usage.Repo) {
 			return
 		}
 		month, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
-		c.JSON(http.StatusOK, gin.H{"month_cost": month, "records": records})
+		saved, _ := repo.MonthlySaved(c.Request.Context(), usage.CurrentMonth())
+		c.JSON(http.StatusOK, gin.H{"month_cost": month, "month_saved": saved, "records": records})
 	})
 }

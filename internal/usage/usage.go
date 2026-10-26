@@ -12,6 +12,7 @@ type Record struct {
 	PromptTokens     int       `json:"prompt_tokens"`
 	CompletionTokens int       `json:"completion_tokens"`
 	Cost             float64   `json:"cost"`
+	SavedCost        float64   `json:"saved_cost"`
 	CacheHit         bool      `json:"cache_hit"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -19,6 +20,7 @@ type Record struct {
 type Repo interface {
 	Record(ctx context.Context, r Record) error
 	MonthlyCost(ctx context.Context, yyyymm string) (float64, error)
+	MonthlySaved(ctx context.Context, yyyymm string) (float64, error)
 	List(ctx context.Context, limit int) ([]Record, error)
 	Close() error
 }
