@@ -69,6 +69,19 @@ func NewRouter(s config.Settings) *gin.Engine {
 		})
 	}
 
+	recordCacheHit := func(model string, promptTokens, completionTokens int) {
+		_ = repo.Record(context.Background(), usage.Record{
+			ID:               newRequestID(),
+			Model:            model,
+			Provider:         "cache",
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			Cost:             0,
+			SavedCost:        pricing.Cost(model, promptTokens, completionTokens),
+			CacheHit:         true,
+		})
+	}
+
 	targetsForModel := func(model string) []proxy.Target {
 		var owners, others []proxy.Target
 		for i, pc := range s.Providers {
@@ -92,6 +105,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
 				m.Requests.WithLabelValues("cache", "hit").Inc()
+				recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
 				return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens}, nil
 			}
 			lastUser := lastUserMessage(req.Messages)
@@ -100,6 +114,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			if semantic != nil {
 				if hit, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
 					m.Requests.WithLabelValues("cache", "hit").Inc()
+					recordCacheHit(req.Model, hit.PromptTokens, hit.CompletionTokens)
 					return provider.ChatResponse{Model: req.Model, Content: hit.Content, PromptTokens: hit.PromptTokens, CompletionTokens: hit.CompletionTokens}, nil
 				} else {
 					semanticVec = vec
@@ -139,6 +154,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			key := exact.Key(req)
 			if cached, ok := exact.Get(key); ok {
 				m.Requests.WithLabelValues("cache", "hit").Inc()
+				recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
 				writeSSEChunk(c, cached.Content)
 				return nil
 			}
