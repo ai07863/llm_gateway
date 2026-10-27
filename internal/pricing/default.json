@@ -1,0 +1,15 @@
+{
+  "models": {
+    "deepseek-chat": { "in": 0.27, "out": 1.10 },
+    "gpt-4o-mini": { "in": 1.10, "out": 4.40 },
+    "qwen-turbo": { "in": 0.30, "out": 0.60 },
+    "qwen-plus": { "in": 0.80, "out": 2.00 },
+    "qwen-max": { "in": 2.40, "out": 9.60 },
+    "qwen3.8-flash": { "in": 0.80, "out": 2.70 },
+    "deepseek-v4.1-flash": {
+      "in": 2.0,
+      "out": 8.0,
+      "off_peak": { "in": 1.0, "out": 4.0, "start": "00:30", "end": "08:30" }
+    }
+  }
+}
