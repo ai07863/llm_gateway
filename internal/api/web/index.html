@@ -14,8 +14,12 @@
 <button onclick="load()">刷新</button>
 <script>
 let chart = null;
+function fmtYuan(v) {
+  return (Number(v) || 0).toFixed(6);
+}
 async function load() {
   const token = document.getElementById('token').value;
+  localStorage.setItem('gateway_token', token);
   let res;
   try {
     res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
@@ -28,8 +32,8 @@ async function load() {
     return;
   }
   const data = await res.json();
-  document.getElementById('cost').textContent = (data.month_cost || 0).toFixed(3);
-  document.getElementById('saved').textContent = (data.month_saved || 0).toFixed(3);
+  document.getElementById('cost').textContent = fmtYuan(data.month_cost);
+  document.getElementById('saved').textContent = fmtYuan(data.month_saved);
   const labels = (data.records || []).map(r => r.created_at || '');
   const costs = (data.records || []).map(r => r.cost || 0);
   if (typeof Chart === 'undefined') {
@@ -42,6 +46,13 @@ async function load() {
     data: { labels, datasets: [{ label: '单次成本', data: costs }] },
   });
 }
+window.addEventListener('DOMContentLoaded', function () {
+  const saved = localStorage.getItem('gateway_token');
+  if (saved) {
+    document.getElementById('token').value = saved;
+    load();
+  }
+});
 </script>
 </body>
 </html>
