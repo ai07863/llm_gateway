@@ -75,7 +75,7 @@ llm-gateway/
 ### 最快上手（TL;DR）
 
 ```bash
-cp configs/.env.example .env              # 填 DEEPSEEK_API_KEY 和自定义 GATEWAY_TOKEN
+cp configs/.env.example .env              # 填 DASHSCOPE_API_KEY 和自定义 GATEWAY_TOKEN
 docker compose up --build                 # 启动网关，监听 :8080
 pip install openai && python examples/python_openai_client.py   # 跑示例（先设 GATEWAY_TOKEN）
 ```
@@ -86,13 +86,17 @@ pip install openai && python examples/python_openai_client.py   # 跑示例（�
 cp configs/.env.example .env
 ```
 
-编辑 `.env`，至少填入一个 provider 的 key，并把 `GATEWAY_TOKEN` 改成你自己的：
+编辑 `.env`，至少填入一个 provider 的 key，并把 `GATEWAY_TOKEN` 改成你自己的。默认示例走阿里云 DashScope（通义千问）的 OpenAI 兼容端点：
 
 ```dotenv
 GATEWAY_TOKEN=change-me
-DEEPSEEK_API_KEY=sk-xxxxxxxx
-OPENAI_API_KEY=sk-xxxxxxxx
+DASHSCOPE_API_KEY=sk-xxxxxxxx
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_MODEL=qwen-plus
+DASHSCOPE_EMBED_MODEL=text-embedding-v3
 ```
+
+如需 DeepSeek / OpenAI，另填 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 即可（见 `configs/.env.example`）。
 
 ### 2. 用 Docker 一键启动
 
@@ -122,7 +126,7 @@ curl http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer change-me" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-chat",
+    "model": "qwen-plus",
     "messages": [{"role": "user", "content": "用一句话解释什么是网关"}]
   }'
 ```
@@ -134,7 +138,7 @@ curl -N http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer change-me" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-chat",
+    "model": "qwen-plus",
     "stream": true,
     "messages": [{"role": "user", "content": "写一个 Go 的 hello world"}]
   }'
@@ -165,7 +169,7 @@ curl http://localhost:8080/v1/admin/usage -H "Authorization: Bearer change-me"
   "month_cost": 0.0123,
   "month_saved": 0.0004,
   "records": [
-    {"id": "...", "model": "deepseek-chat", "provider": "cache",
+    {"id": "...", "model": "qwen-plus", "provider": "cache",
      "prompt_tokens": 20, "completion_tokens": 40, "cost": 0, "saved_cost": 0.00003,
      "cache_hit": true, "created_at": "..."}
   ]
@@ -193,7 +197,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="deepseek-chat",
+    model="qwen-plus",
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)
@@ -210,7 +214,7 @@ const client = new OpenAI({
 });
 
 const resp = await client.chat.completions.create({
-  model: "deepseek-chat",
+  model: "qwen-plus",
   messages: [{ role: "user", content: "你好" }],
 });
 console.log(resp.choices[0].message.content);

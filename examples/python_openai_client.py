@@ -20,7 +20,7 @@ from openai import OpenAI
 
 BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://localhost:8080/v1")
 API_KEY = os.getenv("GATEWAY_TOKEN", "change-me")
-MODEL = os.getenv("GATEWAY_MODEL", "deepseek-chat")
+MODEL = os.getenv("GATEWAY_MODEL", "qwen-plus")
 
 
 def main() -> None:

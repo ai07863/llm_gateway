@@ -47,6 +47,14 @@ func Load() (Settings, error) {
 			EmbedModel: os.Getenv("OPENAI_EMBED_MODEL"),
 		})
 	}
+	// Alibaba Cloud DashScope (通义千问) exposes an OpenAI-compatible endpoint.
+	if key := os.Getenv("DASHSCOPE_API_KEY"); key != "" {
+		s.Providers = append(s.Providers, ProviderConfig{
+			Name: "dashscope", BaseURL: getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+			APIKey: key, Model: getenv("DASHSCOPE_MODEL", "qwen-plus"),
+			EmbedModel: os.Getenv("DASHSCOPE_EMBED_MODEL"),
+		})
+	}
 	return s, nil
 }
 

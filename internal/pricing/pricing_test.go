@@ -11,6 +11,15 @@ func TestCostKnownModel(t *testing.T) {
 	}
 }
 
+func TestCostQwenPlus(t *testing.T) {
+	// qwen-plus: 输入 0.8 元/百万 token，输出 2.0 元/百万 token（示例价）
+	got := Cost("qwen-plus", 1_000_000, 1_000_000)
+	want := 2.8
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
 func TestCostUnknownModelFallsBack(t *testing.T) {
 	if Cost("unknown-model", 1000, 1000) != 0 {
 		t.Fatal("unknown model should cost 0")

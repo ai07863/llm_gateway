@@ -54,6 +54,37 @@ func TestLoadAutoLoadsDotEnv(t *testing.T) {
 	}
 }
 
+func TestLoadAddsDashscopeProvider(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "DASHSCOPE_API_KEY=sk-test\n")
+	clearEnv(t, "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "DASHSCOPE_API_KEY",
+		"DASHSCOPE_BASE_URL", "DASHSCOPE_MODEL", "DASHSCOPE_EMBED_MODEL")
+	chdir(t, dir)
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	var got *ProviderConfig
+	for i := range s.Providers {
+		if s.Providers[i].Name == "dashscope" {
+			got = &s.Providers[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("want dashscope provider from .env, got %+v", s.Providers)
+	}
+	if got.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("want dashscope OpenAI-compatible base url, got %q", got.BaseURL)
+	}
+	if got.Model != "qwen-plus" {
+		t.Fatalf("want default model qwen-plus, got %q", got.Model)
+	}
+	if got.APIKey != "sk-test" {
+		t.Fatalf("want key from .env, got %q", got.APIKey)
+	}
+}
+
 func TestLoadEnvTakesPrecedenceOverDotEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeDotEnv(t, dir, "GATEWAY_TOKEN=from-dotenv\n")
