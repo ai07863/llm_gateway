@@ -7,7 +7,26 @@ import (
 	"testing"
 )
 
+func snapshotStore(t *testing.T) {
+	t.Helper()
+	store.mu.RLock()
+	savedModels := store.models
+	savedRefresh := store.lastRefresh
+	savedSource := store.source
+	savedErr := store.lastErr
+	store.mu.RUnlock()
+	t.Cleanup(func() {
+		store.mu.Lock()
+		store.models = savedModels
+		store.lastRefresh = savedRefresh
+		store.source = savedSource
+		store.lastErr = savedErr
+		store.mu.Unlock()
+	})
+}
+
 func TestRefreshMergesRemoteOverDefault(t *testing.T) {
+	snapshotStore(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models":{
 			"deepseek-chat":{"in":9,"out":9},
@@ -35,12 +54,14 @@ func TestRefreshMergesRemoteOverDefault(t *testing.T) {
 }
 
 func TestRefreshRejectsNonHTTPScheme(t *testing.T) {
+	snapshotStore(t)
 	if err := Refresh(context.Background(), "file:///etc/passwd"); err == nil {
 		t.Fatal("non-http scheme must be rejected")
 	}
 }
 
 func TestRefreshKeepsOldTableOnError(t *testing.T) {
+	snapshotStore(t)
 	before := costAt("deepseek-chat", 1_000_000, 0, NowFunc())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +81,7 @@ func TestRefreshKeepsOldTableOnError(t *testing.T) {
 }
 
 func TestRefreshRejectsBadJSON(t *testing.T) {
+	snapshotStore(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{not json`))
 	}))
@@ -70,6 +92,7 @@ func TestRefreshRejectsBadJSON(t *testing.T) {
 }
 
 func TestRefreshRejectsBadWindow(t *testing.T) {
+	snapshotStore(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models":{"m":{"in":1,"out":1,"off_peak":{"in":1,"out":1,"start":"99:99","end":"08:30"}}}}`))
 	}))
