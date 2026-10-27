@@ -4,53 +4,130 @@
 <meta charset="utf-8" />
 <title>LLM Gateway 用量看板</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 24px; }
+  #records { border-collapse: collapse; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  #records th, #records td { border: 1px solid #ddd; padding: 4px 8px; text-align: right; }
+  #records th:nth-child(2), #records td:nth-child(2),
+  #records th:nth-child(3), #records td:nth-child(3),
+  #records th:nth-child(1), #records td:nth-child(1) { text-align: left; }
+  #updated { color: #888; font-size: 12px; }
+</style>
 </head>
 <body>
 <h1>LLM Gateway</h1>
-<p>本月花费：<span id="cost">-</span> 元 ｜ 本月节省：<span id="saved">-</span> 元</p>
+<p>本月花费：<span id="cost">-</span> 元 ｜ 本月节省：<span id="saved">-</span> 元 <span id="updated"></span></p>
 <canvas id="chart" height="120"></canvas>
-<p id="hint">首次使用：填入网关 token 点刷新，之后会记住（或访问 /?token=你的token 免填）：</p>
+<p id="hint">首次使用：填入网关 token 点刷新，之后会记住并每 5 秒自动刷新（或访问 /?token=你的token 免填）：</p>
 <input id="token" placeholder="gateway token" />
-<button onclick="load()">刷新</button>
+<button onclick="reload()">刷新</button>
+<h3>最近调用</h3>
+<table id="records">
+  <thead>
+    <tr><th>时间</th><th>模型</th><th>供应商</th><th>prompt</th><th>completion</th><th>成本(元)</th><th>节省(元)</th><th>缓存</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
 <script>
 let chart = null;
+let timer = null;
+let lastToken = '';
+
 function fmtYuan(v) {
   return (Number(v) || 0).toFixed(6);
 }
 function setHint(text) {
   document.getElementById('hint').textContent = text;
 }
-async function load() {
+function renderRecords(records) {
+  const tb = document.querySelector('#records tbody');
+  tb.innerHTML = '';
+  (records || []).slice(0, 20).forEach(function (r) {
+    const tr = document.createElement('tr');
+    const cells = [
+      (r.created_at || '').replace('T', ' ').slice(0, 19),
+      r.model || '',
+      r.provider || '',
+      r.prompt_tokens || 0,
+      r.completion_tokens || 0,
+      fmtYuan(r.cost),
+      fmtYuan(r.saved_cost),
+      r.cache_hit ? '命中' : '—'
+    ];
+    cells.forEach(function (v) {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+}
+function renderChart(records) {
+  if (typeof Chart === 'undefined') {
+    return;
+  }
+  const rows = (records || []).slice().reverse();
+  const labels = rows.map(function (r) { return (r.created_at || '').slice(11, 19); });
+  const costs = rows.map(function (r) { return r.cost || 0; });
+  if (chart) {
+    chart.destroy();
+  }
+  chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels: labels, datasets: [{ label: '单次成本', data: costs }] },
+  });
+}
+async function refresh(silent) {
   const token = document.getElementById('token').value;
-  if (token) {
+  if (!token) {
+    return;
+  }
+  if (token !== lastToken) {
     localStorage.setItem('gateway_token', token);
+    lastToken = token;
   }
   let res;
   try {
     res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
   } catch (e) {
-    alert('无法连接网关：' + e.message);
+    if (!silent) {
+      alert('无法连接网关：' + e.message);
+    }
     return;
   }
   if (!res.ok) {
-    alert('请求失败：HTTP ' + res.status + (res.status === 401 ? '（token 错误或未填）' : ''));
+    if (!silent) {
+      alert('请求失败：HTTP ' + res.status + (res.status === 401 ? '（token 错误或未填）' : ''));
+    }
+    if (res.status === 401) {
+      stopPolling();
+    }
     return;
   }
   const data = await res.json();
-  setHint('已记住 token，下次自动加载：');
+  setHint('已记住 token，每 5 秒自动刷新：');
   document.getElementById('cost').textContent = fmtYuan(data.month_cost);
   document.getElementById('saved').textContent = fmtYuan(data.month_saved);
-  const labels = (data.records || []).map(r => r.created_at || '');
-  const costs = (data.records || []).map(r => r.cost || 0);
-  if (typeof Chart === 'undefined') {
-    alert('图表库未加载（可能离线），仅显示花费数值。');
-    return;
+  document.getElementById('updated').textContent = '（更新于 ' + new Date().toLocaleTimeString() + '）';
+  renderRecords(data.records);
+  renderChart(data.records);
+}
+function stopPolling() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
   }
-  if (chart) chart.destroy();
-  chart = new Chart(document.getElementById('chart'), {
-    type: 'line',
-    data: { labels, datasets: [{ label: '单次成本', data: costs }] },
-  });
+}
+function startPolling() {
+  stopPolling();
+  timer = setInterval(function () {
+    if (!document.hidden) {
+      refresh(true);
+    }
+  }, 5000);
+}
+function reload() {
+  refresh(false);
 }
 function initToken() {
   const params = new URLSearchParams(location.search);
@@ -69,7 +146,8 @@ window.addEventListener('DOMContentLoaded', function () {
   if (token) {
     document.getElementById('token').value = token;
     setHint('已自动加载（token 已记住，可用 /?token=... 免填）：');
-    load();
+    refresh(false);
+    startPolling();
   }
 });
 </script>

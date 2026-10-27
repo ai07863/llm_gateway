@@ -43,6 +43,29 @@ func TestDashboardRemembersToken(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsModelPerRecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, `id="records"`) || !strings.Contains(body, "r.model") {
+		t.Fatal("dashboard should render a per-call table including the model name")
+	}
+}
+
+func TestDashboardAutoRefreshes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(w.Body.String(), "setInterval") {
+		t.Fatal("dashboard should poll so the numbers update while the user keeps calling the gateway")
+	}
+}
+
 func TestDashboardSupportsTokenQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
