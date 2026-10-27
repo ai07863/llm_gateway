@@ -20,6 +20,15 @@ func TestCostQwenPlus(t *testing.T) {
 	}
 }
 
+func TestCostQwen38Flash(t *testing.T) {
+	// qwen3.8-flash: 输入 0.8 元/百万 token，输出 2.7 元/百万 token
+	got := Cost("qwen3.8-flash", 1_000_000, 1_000_000)
+	want := 3.5
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
 func TestCostUnknownModelFallsBack(t *testing.T) {
 	if Cost("unknown-model", 1000, 1000) != 0 {
 		t.Fatal("unknown model should cost 0")
