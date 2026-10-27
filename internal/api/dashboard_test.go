@@ -42,3 +42,15 @@ func TestDashboardRemembersToken(t *testing.T) {
 		t.Fatal("dashboard should persist the gateway token so the user does not retype it every visit")
 	}
 }
+
+func TestDashboardSupportsTokenQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "URLSearchParams") || !strings.Contains(body, "replaceState") {
+		t.Fatal("dashboard should accept a ?token= URL param and strip it, so a bookmarked URL never prompts again")
+	}
+}

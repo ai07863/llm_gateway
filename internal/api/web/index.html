@@ -9,7 +9,7 @@
 <h1>LLM Gateway</h1>
 <p>本月花费：<span id="cost">-</span> 元 ｜ 本月节省：<span id="saved">-</span> 元</p>
 <canvas id="chart" height="120"></canvas>
-<p>请先填入网关 token 后点击刷新：</p>
+<p id="hint">首次使用：填入网关 token 点刷新，之后会记住（或访问 /?token=你的token 免填）：</p>
 <input id="token" placeholder="gateway token" />
 <button onclick="load()">刷新</button>
 <script>
@@ -17,9 +17,14 @@ let chart = null;
 function fmtYuan(v) {
   return (Number(v) || 0).toFixed(6);
 }
+function setHint(text) {
+  document.getElementById('hint').textContent = text;
+}
 async function load() {
   const token = document.getElementById('token').value;
-  localStorage.setItem('gateway_token', token);
+  if (token) {
+    localStorage.setItem('gateway_token', token);
+  }
   let res;
   try {
     res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
@@ -32,6 +37,7 @@ async function load() {
     return;
   }
   const data = await res.json();
+  setHint('已记住 token，下次自动加载：');
   document.getElementById('cost').textContent = fmtYuan(data.month_cost);
   document.getElementById('saved').textContent = fmtYuan(data.month_saved);
   const labels = (data.records || []).map(r => r.created_at || '');
@@ -46,10 +52,23 @@ async function load() {
     data: { labels, datasets: [{ label: '单次成本', data: costs }] },
   });
 }
+function initToken() {
+  const params = new URLSearchParams(location.search);
+  const fromURL = params.get('token');
+  if (fromURL) {
+    localStorage.setItem('gateway_token', fromURL);
+    params.delete('token');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : ''));
+    return fromURL;
+  }
+  return localStorage.getItem('gateway_token') || '';
+}
 window.addEventListener('DOMContentLoaded', function () {
-  const saved = localStorage.getItem('gateway_token');
-  if (saved) {
-    document.getElementById('token').value = saved;
+  const token = initToken();
+  if (token) {
+    document.getElementById('token').value = token;
+    setHint('已自动加载（token 已记住，可用 /?token=... 免填）：');
     load();
   }
 });
