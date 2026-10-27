@@ -58,6 +58,35 @@ func TestRefreshRejectsNonHTTPScheme(t *testing.T) {
 	if err := Refresh(context.Background(), "file:///etc/passwd"); err == nil {
 		t.Fatal("non-http scheme must be rejected")
 	}
+	if Take().LastError == "" {
+		t.Fatal("pre-flight failure should record last_error")
+	}
+}
+
+func TestRefreshRejectsOversizePayload(t *testing.T) {
+	snapshotStore(t)
+	before := costAt("deepseek-chat", 1_000_000, 0, NowFunc())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		big := make([]byte, maxPricingBytes+1)
+		for i := range big {
+			big[i] = 'a'
+		}
+		_, _ = w.Write([]byte(`{"models":{"m":"`))
+		_, _ = w.Write(big)
+		_, _ = w.Write([]byte(`"}}`))
+	}))
+	defer srv.Close()
+
+	if err := Refresh(context.Background(), srv.URL); err == nil {
+		t.Fatal("oversize payload must be rejected")
+	}
+	if Take().LastError == "" {
+		t.Fatal("oversize payload should record last_error")
+	}
+	if after := costAt("deepseek-chat", 1_000_000, 0, NowFunc()); after != before {
+		t.Fatalf("oversize refresh must not change table: before %v after %v", before, after)
+	}
 }
 
 func TestRefreshKeepsOldTableOnError(t *testing.T) {

@@ -25,13 +25,17 @@ type Snapshot struct {
 func Refresh(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
+		store.setErr(err.Error())
 		return err
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("pricing: unsupported url scheme %q", u.Scheme)
+		err := fmt.Errorf("pricing: unsupported url scheme %q", u.Scheme)
+		store.setErr(err.Error())
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
+		store.setErr(err.Error())
 		return err
 	}
 	res, err := httpClient.Do(req)
@@ -45,8 +49,13 @@ func Refresh(ctx context.Context, rawURL string) error {
 		store.setErr(err.Error())
 		return err
 	}
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxPricingBytes))
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxPricingBytes+1))
 	if err != nil {
+		store.setErr(err.Error())
+		return err
+	}
+	if len(body) > maxPricingBytes {
+		err := fmt.Errorf("pricing: payload exceeds %d bytes", maxPricingBytes)
 		store.setErr(err.Error())
 		return err
 	}
