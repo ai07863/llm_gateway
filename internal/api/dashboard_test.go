@@ -66,6 +66,17 @@ func TestDashboardAutoRefreshes(t *testing.T) {
 	}
 }
 
+func TestDashboardIsNotCached(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Fatalf("dashboard must not be cached, otherwise browsers keep the old polling page: Cache-Control=%q", got)
+	}
+}
+
 func TestDashboardUsesRealtimeStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
