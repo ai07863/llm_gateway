@@ -48,6 +48,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 	}
 	registerModels(v1, models)
 	registerAdmin(v1, repo)
+	registerPricing(v1)
 	registerEmbeddings(v1, providers)
 
 	exact := cache.NewExact(10 * time.Minute)

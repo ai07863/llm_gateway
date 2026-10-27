@@ -20,6 +20,7 @@
 - **成本 / Token 落库**：每次调用写入 SQLite，可通过 `/v1/admin/usage` 查询历史用量与当月成本。
 - **预算护栏**：当月花费接近上限时**降级**到便宜模型，超上限时**拒绝**（`429`）；降级只在存在**更便宜的、已配置的模型**时发生，否则保持原模型不变。
 - **降本缓存**：精确缓存（request hash）+ 语义缓存（embedding 余弦相似度）；命中会写入用量记录（`cache_hit=true`）并按**原模型价格**计算 `saved_cost`，`/v1/admin/usage` 返回 `month_saved`。
+- **分时计价与价格热更新**：价格表支持高峰/空闲两档价（按请求时刻、北京时间判定），并可从 `PRICING_URL` 指向的 JSON 启动时 + 定时热更新，无需重编译；不配置则用内置默认价。
 - **可观测**：Prometheus `/metrics` + 极简用量看板页 `/`。
 - **固定 token 鉴权**：防止网关裸奔，`Authorization: Bearer <GATEWAY_TOKEN>`。
 
@@ -154,6 +155,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 | POST | `/v1/embeddings` | 文本向量化（`input` 可以是字符串或字符串数组） |
 | GET | `/v1/models` | 列出已配置的模型 |
 | GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost`、当月节省 `month_saved` + 最近记录 `records` |
+| GET | `/v1/admin/pricing` | 查看当前价格表（`source` / `last_refresh` / `models`） |
 | GET | `/metrics` | Prometheus 指标 |
 | GET | `/` | 极简用量看板页 |
 | GET | `/healthz` | 健康检查 |
