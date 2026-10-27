@@ -49,6 +49,8 @@ func NewRouter(s config.Settings) *gin.Engine {
 	registerModels(v1, models)
 	registerAdmin(v1, repo)
 	registerPricing(v1)
+	hub := newUsageHub()
+	registerUsageStream(v1, hub)
 	registerEmbeddings(v1, providers)
 
 	exact := cache.NewExact(10 * time.Minute)
@@ -59,8 +61,15 @@ func NewRouter(s config.Settings) *gin.Engine {
 		}
 	}
 
+	publish := func(rec usage.Record) {
+		rec.CreatedAt = usage.NowFunc()
+		if err := repo.Record(context.Background(), rec); err == nil {
+			hub.publish(rec)
+		}
+	}
+
 	recordUsage := func(model, providerName string, promptTokens, completionTokens int) {
-		_ = repo.Record(context.Background(), usage.Record{
+		publish(usage.Record{
 			ID:               newRequestID(),
 			Model:            model,
 			Provider:         providerName,
@@ -71,7 +80,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 	}
 
 	recordCacheHit := func(model string, promptTokens, completionTokens int) {
-		_ = repo.Record(context.Background(), usage.Record{
+		publish(usage.Record{
 			ID:               newRequestID(),
 			Model:            model,
 			Provider:         "cache",

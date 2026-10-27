@@ -66,6 +66,21 @@ func TestDashboardAutoRefreshes(t *testing.T) {
 	}
 }
 
+func TestDashboardUsesRealtimeStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "/v1/admin/usage/stream") || !strings.Contains(body, "getReader") {
+		t.Fatal("dashboard should subscribe to the usage SSE stream for real-time updates")
+	}
+	if strings.Contains(body, "}, 5000)") {
+		t.Fatal("dashboard should not poll every 5 seconds")
+	}
+}
+
 func TestDashboardSupportsTokenQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
