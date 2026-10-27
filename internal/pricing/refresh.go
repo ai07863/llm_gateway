@@ -13,7 +13,7 @@ import (
 
 const maxPricingBytes = 1 << 20 // 1MB
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 type Snapshot struct {
 	Source      string                `json:"source"`
@@ -121,6 +121,27 @@ func Take() Snapshot {
 	return Snapshot{Source: store.source, LastRefresh: store.lastRefresh, LastError: store.lastErr, Models: models}
 }
 
+func refreshWithRetry(ctx context.Context, rawURL string, attempts int, delay time.Duration) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = Refresh(ctx, rawURL); err == nil {
+			return nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return err
+}
+
 func StartAutoRefresh(rawURL string, interval time.Duration) {
 	if rawURL == "" {
 		return
@@ -130,13 +151,13 @@ func StartAutoRefresh(rawURL string, interval time.Duration) {
 	}
 	go func() {
 		ctx := context.Background()
-		if err := Refresh(ctx, rawURL); err != nil {
+		if err := refreshWithRetry(ctx, rawURL, 3, 2*time.Second); err != nil {
 			log.Printf("pricing: initial refresh failed: %v", err)
 		}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := Refresh(ctx, rawURL); err != nil {
+			if err := refreshWithRetry(ctx, rawURL, 3, 2*time.Second); err != nil {
 				log.Printf("pricing: refresh failed: %v", err)
 			}
 		}

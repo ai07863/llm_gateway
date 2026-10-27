@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func snapshotStore(t *testing.T) {
@@ -128,5 +129,46 @@ func TestRefreshRejectsBadWindow(t *testing.T) {
 	defer srv.Close()
 	if err := Refresh(context.Background(), srv.URL); err == nil {
 		t.Fatal("bad off_peak window must error")
+	}
+}
+
+func TestRefreshRetrySucceedsAfterTransientFailures(t *testing.T) {
+	snapshotStore(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":{"retried":{"in":1,"out":1}}}`))
+	}))
+	defer srv.Close()
+
+	if err := refreshWithRetry(context.Background(), srv.URL, 3, time.Millisecond); err != nil {
+		t.Fatalf("want success after transient failures, got %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("want 3 attempts, got %d", calls)
+	}
+	if _, ok := Score("retried"); !ok {
+		t.Fatal("table should be updated after a successful retry")
+	}
+}
+
+func TestRefreshRetryGivesUp(t *testing.T) {
+	snapshotStore(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	if err := refreshWithRetry(context.Background(), srv.URL, 2, time.Millisecond); err == nil {
+		t.Fatal("want error after exhausting retries")
+	}
+	if calls != 2 {
+		t.Fatalf("want 2 attempts, got %d", calls)
 	}
 }
