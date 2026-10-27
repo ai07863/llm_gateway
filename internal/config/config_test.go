@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeDotEnv(t *testing.T, dir, content string) {
@@ -98,5 +99,41 @@ func TestLoadEnvTakesPrecedenceOverDotEnv(t *testing.T) {
 	}
 	if s.GatewayToken != "from-env" {
 		t.Fatalf("want env to win over .env, got %q", s.GatewayToken)
+	}
+}
+
+func TestLoadPricingSettings(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "PRICING_URL=https://example.com/pricing.json\nPRICING_REFRESH_INTERVAL=30m\n")
+	clearEnv(t, "PRICING_URL", "PRICING_REFRESH_INTERVAL")
+	chdir(t, dir)
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.PricingURL != "https://example.com/pricing.json" {
+		t.Fatalf("want pricing url from .env, got %q", s.PricingURL)
+	}
+	if s.PricingRefreshInterval != 30*time.Minute {
+		t.Fatalf("want 30m interval, got %v", s.PricingRefreshInterval)
+	}
+}
+
+func TestLoadPricingDefaultsTo6h(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "GATEWAY_TOKEN=x\n")
+	clearEnv(t, "PRICING_URL", "PRICING_REFRESH_INTERVAL", "GATEWAY_TOKEN")
+	chdir(t, dir)
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.PricingURL != "" {
+		t.Fatalf("want empty pricing url, got %q", s.PricingURL)
+	}
+	if s.PricingRefreshInterval != 6*time.Hour {
+		t.Fatalf("want 6h default, got %v", s.PricingRefreshInterval)
 	}
 }
