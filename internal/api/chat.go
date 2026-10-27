@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -26,11 +27,14 @@ func writeError(c *gin.Context, err error) {
 	c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error()}})
 }
 
-type chatBody struct {
-	Model       string             `json:"model"`
-	Messages    []provider.Message `json:"messages"`
-	Temperature *float64           `json:"temperature"`
-	Stream      bool               `json:"stream"`
+// chatProbe is a lenient view of the request: messages are kept as raw JSON so
+// tool-call / multimodal message shapes still pass through untouched.
+type chatProbe struct {
+	Model       string          `json:"model"`
+	Messages    json.RawMessage `json:"messages"`
+	Temperature *float64        `json:"temperature"`
+	Stream      bool            `json:"stream"`
+	Tools       json.RawMessage `json:"tools"`
 }
 
 func registerChat(
@@ -39,13 +43,30 @@ func registerChat(
 	chatStream func(c *gin.Context, req provider.ChatRequest) error,
 ) {
 	v1.POST("/chat/completions", func(c *gin.Context) {
-		var body chatBody
-		if err := c.ShouldBindJSON(&body); err != nil {
+		raw, err := io.ReadAll(c.Request.Body)
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
 			return
 		}
-		req := provider.ChatRequest{Model: body.Model, Messages: body.Messages, Temperature: body.Temperature}
-		if body.Stream {
+		var probe chatProbe
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error()}})
+			return
+		}
+		var msgs []provider.Message
+		if len(probe.Messages) > 0 {
+			// Best effort: only used for cache keys and semantic lookup. A shape
+			// we cannot parse simply means no cache benefit, not a failure.
+			_ = json.Unmarshal(probe.Messages, &msgs)
+		}
+		req := provider.ChatRequest{
+			Model:       probe.Model,
+			Messages:    msgs,
+			Temperature: probe.Temperature,
+			Tools:       probe.Tools,
+			Raw:         raw,
+		}
+		if probe.Stream {
 			if err := chatStream(c, req); err != nil {
 				writeError(c, err)
 			}
@@ -54,6 +75,10 @@ func registerChat(
 		resp, err := chat(c, req)
 		if err != nil {
 			writeError(c, err)
+			return
+		}
+		if len(resp.Raw) > 0 {
+			c.Data(http.StatusOK, "application/json", resp.Raw)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{

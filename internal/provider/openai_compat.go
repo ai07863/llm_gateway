@@ -49,8 +49,36 @@ type oaChatResponse struct {
 	} `json:"usage"`
 }
 
+func buildBody(req ChatRequest, stream bool) ([]byte, error) {
+	if len(req.Raw) == 0 {
+		r := req
+		r.Stream = stream || req.Stream
+		if stream {
+			return json.Marshal(struct {
+				ChatRequest
+				StreamOptions map[string]bool `json:"stream_options,omitempty"`
+			}{r, map[string]bool{"include_usage": true}})
+		}
+		return json.Marshal(r)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(req.Raw, &m); err != nil {
+		return nil, err
+	}
+	model, err := json.Marshal(req.Model)
+	if err != nil {
+		return nil, err
+	}
+	m["model"] = model
+	if stream {
+		m["stream"] = json.RawMessage("true")
+		m["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	}
+	return json.Marshal(m)
+}
+
 func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
-	body, err := json.Marshal(req)
+	body, err := buildBody(req, false)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -70,8 +98,12 @@ func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse,
 		b, _ := io.ReadAll(res.Body)
 		return ChatResponse{}, NewStatusError(p.cfg.Name, res.StatusCode, string(b))
 	}
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ChatResponse{}, err
+	}
 	var parsed oaChatResponse
-	if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return ChatResponse{}, err
 	}
 	out := ChatResponse{
@@ -79,6 +111,7 @@ func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse,
 		TotalTokens:      parsed.Usage.TotalTokens,
 		PromptTokens:     parsed.Usage.PromptTokens,
 		CompletionTokens: parsed.Usage.CompletionTokens,
+		Raw:              respBody,
 	}
 	if len(parsed.Choices) > 0 {
 		out.Content = parsed.Choices[0].Message.Content
@@ -126,14 +159,7 @@ func (p *openAICompat) Embed(ctx context.Context, texts []string) ([][]float64, 
 }
 
 func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error) {
-	req.Stream = true
-	body, err := json.Marshal(struct {
-		ChatRequest
-		StreamOptions map[string]bool `json:"stream_options,omitempty"`
-	}{
-		ChatRequest:   req,
-		StreamOptions: map[string]bool{"include_usage": true},
-	})
+	body, err := buildBody(req, true)
 	if err != nil {
 		return nil, err
 	}
@@ -197,10 +223,14 @@ func (p *openAICompat) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			if parsed.Usage.PromptTokens != 0 || parsed.Usage.CompletionTokens != 0 || parsed.Usage.TotalTokens != 0 {
 				prompt, completion, total = parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, parsed.Usage.TotalTokens
 			}
-			if len(parsed.Choices) > 0 && parsed.Choices[0].Delta.Content != "" {
-				if !send(StreamChunk{Content: parsed.Choices[0].Delta.Content}) {
-					return
-				}
+			content := ""
+			if len(parsed.Choices) > 0 {
+				content = parsed.Choices[0].Delta.Content
+			}
+			// Forward the payload verbatim so tool_call deltas and fields this
+			// gateway does not model reach the client unchanged.
+			if !send(StreamChunk{Raw: payload, Content: content}) {
+				return
 			}
 		}
 		if err := scanner.Err(); err != nil {

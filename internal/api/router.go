@@ -103,16 +103,21 @@ func NewRouter(s config.Settings) *gin.Engine {
 
 	registerChat(v1,
 		func(c *gin.Context, req provider.ChatRequest) (provider.ChatResponse, error) {
+			// Tool-calling requests must not be served from cache: a stale answer
+			// could carry tool_calls that no longer match the client's state.
+			useCache := len(req.Tools) == 0
 			key := exact.Key(req)
-			if cached, ok := exact.Get(key); ok {
-				m.Requests.WithLabelValues("cache", "hit").Inc()
-				recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
-				return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens, TotalTokens: cached.PromptTokens + cached.CompletionTokens}, nil
+			if useCache {
+				if cached, ok := exact.Get(key); ok {
+					m.Requests.WithLabelValues("cache", "hit").Inc()
+					recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
+					return provider.ChatResponse{Model: req.Model, Content: cached.Content, PromptTokens: cached.PromptTokens, CompletionTokens: cached.CompletionTokens, TotalTokens: cached.PromptTokens + cached.CompletionTokens}, nil
+				}
 			}
 			lastUser := lastUserMessage(req.Messages)
 			scope := semanticScope(req)
 			var semanticVec []float64
-			if semantic != nil {
+			if useCache && semantic != nil {
 				if hit, vec, ok := semantic.Lookup(c.Request.Context(), scope, lastUser); ok {
 					m.Requests.WithLabelValues("cache", "hit").Inc()
 					recordCacheHit(req.Model, hit.PromptTokens, hit.CompletionTokens)
@@ -140,9 +145,11 @@ func NewRouter(s config.Settings) *gin.Engine {
 				m.Requests.WithLabelValues("unknown", "502").Inc()
 				return provider.ChatResponse{}, err
 			}
-			exact.Set(key, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
-			if semantic != nil {
-				_ = semantic.Store(scope, semanticVec, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
+			if useCache {
+				exact.Set(key, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
+				if semantic != nil {
+					_ = semantic.Store(scope, semanticVec, cache.CachedResult{Content: resp.Content, PromptTokens: resp.PromptTokens, CompletionTokens: resp.CompletionTokens})
+				}
 			}
 			recordUsage(resp.Model, used.Name(), resp.PromptTokens, resp.CompletionTokens)
 			m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
@@ -152,12 +159,15 @@ func NewRouter(s config.Settings) *gin.Engine {
 			return resp, nil
 		},
 		func(c *gin.Context, req provider.ChatRequest) error {
+			useCache := len(req.Tools) == 0
 			key := exact.Key(req)
-			if cached, ok := exact.Get(key); ok {
-				m.Requests.WithLabelValues("cache", "hit").Inc()
-				recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
-				writeSSEChunk(c, cached.Content)
-				return nil
+			if useCache {
+				if cached, ok := exact.Get(key); ok {
+					m.Requests.WithLabelValues("cache", "hit").Inc()
+					recordCacheHit(req.Model, cached.PromptTokens, cached.CompletionTokens)
+					writeSSEChunk(c, cached.Content)
+					return nil
+				}
 			}
 			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
 			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
@@ -201,7 +211,11 @@ func NewRouter(s config.Settings) *gin.Engine {
 					return false
 				}
 				content.WriteString(chunk.Content)
-				fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": chunk.Content}}}}))
+				if chunk.Raw != "" {
+					fmt.Fprintf(w, "data: %s\n\n", chunk.Raw)
+				} else {
+					fmt.Fprintf(w, "data: %s\n\n", mustJSON(gin.H{"choices": []gin.H{{"delta": gin.H{"content": chunk.Content}}}}))
+				}
 				return true
 			})
 			// Only cache/record when the stream finished cleanly AND the client
@@ -213,7 +227,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 			case c.Request.Context().Err() != nil:
 				m.Requests.WithLabelValues(used.Name(), "canceled").Inc()
 			default:
-				exact.Set(key, cache.CachedResult{Content: content.String(), PromptTokens: prompt, CompletionTokens: completion})
+				if useCache {
+					exact.Set(key, cache.CachedResult{Content: content.String(), PromptTokens: prompt, CompletionTokens: completion})
+				}
 				recordUsage(req.Model, used.Name(), prompt, completion)
 				m.Latency.WithLabelValues(used.Name()).Observe(time.Since(start).Seconds())
 				m.Requests.WithLabelValues(used.Name(), "200").Inc()
