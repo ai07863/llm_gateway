@@ -26,13 +26,19 @@ if (-not (Test-Path -LiteralPath $envFile)) {
   Write-Host "已从 configs/.env.example 生成 .env。请填入 DASHSCOPE_API_KEY 和 GATEWAY_TOKEN 后重新运行。" -ForegroundColor Yellow
   exit 1
 }
-$tokenLine = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*GATEWAY_TOKEN\s*=' } | Select-Object -First 1
+$tokenLine = Get-Content -LiteralPath $envFile -Encoding UTF8 | Where-Object { $_ -match '^\s*GATEWAY_TOKEN\s*=' } | Select-Object -First 1
 $token = if ($tokenLine) { ($tokenLine -replace '^\s*GATEWAY_TOKEN\s*=\s*', '').Trim() } else { '' }
 if (-not $token) { Fail ".env 里 GATEWAY_TOKEN 为空，请先设置。" }
 
-$hasProvider = (Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*(DASHSCOPE|OPENAI|DEEPSEEK)_API_KEY\s*=\s*\S' }).Count -gt 0
+$badLines = @(Get-Content -LiteralPath $envFile -Encoding UTF8 | Where-Object { $_ -match '^\s*#.*\b[A-Z][A-Z0-9_]*\s*=' })
+if ($badLines.Count -gt 0) {
+  Write-Host ".env 疑似换行损坏（注释行里出现了 KEY=VALUE）。请用编辑器修正换行后再运行。" -ForegroundColor Red
+  exit 1
+}
+$hasProvider = (Get-Content -LiteralPath $envFile -Encoding UTF8 | Where-Object { $_ -match '^[ \t]*(DASHSCOPE|OPENAI|DEEPSEEK)_API_KEY[ \t]*=[ \t]*\S' }).Count -gt 0
 if (-not $hasProvider) {
-  Write-Host "警告：.env 里没有任何 provider 的 API_KEY，网关能启动但聊天会 502。" -ForegroundColor Yellow
+  Write-Host ".env 里没有可用的 provider API_KEY（DASHSCOPE/OPENAI/DEEPSEEK），聊天会 502。请填写后重试。" -ForegroundColor Red
+  exit 1
 }
 
 # 2) 释放 8080
