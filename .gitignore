@@ -5,3 +5,5 @@
 /out/
 __pycache__/
 *.pyc
+/bin/
+*.log

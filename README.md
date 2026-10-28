@@ -81,6 +81,13 @@ docker compose up --build                 # 启动网关，监听 :8080
 pip install openai && python examples/python_openai_client.py   # 跑示例（先设 GATEWAY_TOKEN）
 ```
 
+Windows 一键启动（自动释放 8080、编译、后台启动，并打印免填 token 的看板链接）：
+
+```powershell
+.\start.cmd            # 或: powershell -ExecutionPolicy Bypass -File scripts\start.ps1
+.\scripts\stop.ps1     # 停止
+```
+
 ### 1. 准备配置
 
 ```bash
