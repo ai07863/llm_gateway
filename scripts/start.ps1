@@ -101,6 +101,8 @@ try {
 
 Write-Host ""
 Write-Host "网关已启动 (PID $($p.Id))" -ForegroundColor Green
+Write-Host "PORT=$port"
+Write-Host "URL=http://localhost:$port/?token=$token"
 Write-Host "端口:             $port"
 Write-Host "看板(免填 token): http://localhost:$port/?token=$token"
 Write-Host "健康检查:         http://localhost:$port/healthz"

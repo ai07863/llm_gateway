@@ -2,5 +2,6 @@
 chcp 65001 >nul
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start.ps1" %*
 echo.
-echo 上面就是端口和看板地址。按任意键关闭此窗口...
+echo If you see the PORT and dashboard URL above, the gateway started.
+echo Press any key to close this window...
 pause >nul
