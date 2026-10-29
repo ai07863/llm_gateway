@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"llm-gateway/internal/config"
+	"llm-gateway/internal/metrics"
 	"llm-gateway/internal/usage"
 )
 
@@ -173,5 +174,47 @@ func TestRequestsEndpointFiltersAndPaginates(t *testing.T) {
 
 	if code, _, _ := get("?cache=maybe"); code != http.StatusBadRequest {
 		t.Fatalf("invalid cache filter: want 400, got %d", code)
+	}
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	m := metrics.New()
+	m.Requests.WithLabelValues("p1", "200").Add(9)
+	m.Requests.WithLabelValues("p1", "500").Inc()
+	m.Latency.WithLabelValues("p1").Observe(0.2)
+
+	r := gin.New()
+	registerHealth(r.Group("/v1"), m)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/admin/health", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		RequestsTotal int     `json:"requests_total"`
+		ErrorRate     float64 `json:"error_rate"`
+		Latency       struct {
+			Avg float64 `json:"avg"`
+			P50 float64 `json:"p50"`
+			P95 float64 `json:"p95"`
+		} `json:"latency_ms"`
+		ByStatus []struct {
+			Status string `json:"status"`
+			Count  int    `json:"count"`
+		} `json:"by_status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.RequestsTotal != 10 || body.ErrorRate < 0.09 || body.ErrorRate > 0.11 {
+		t.Fatalf("counts: %+v", body)
+	}
+	if body.Latency.Avg <= 0 || body.Latency.P50 <= 0 {
+		t.Fatalf("latency: %+v", body.Latency)
+	}
+	if len(body.ByStatus) != 2 {
+		t.Fatalf("by_status: %+v", body.ByStatus)
 	}
 }
