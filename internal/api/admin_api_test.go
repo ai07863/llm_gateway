@@ -113,3 +113,65 @@ func TestSummaryWithoutBudgetReportsZeroLimit(t *testing.T) {
 		t.Fatalf("disabled budget: %+v", body.Budget)
 	}
 }
+
+func TestRequestsEndpointFiltersAndPaginates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newUsageRepo(t, "requests")
+	ctx := context.Background()
+	for _, rec := range []usage.Record{
+		{ID: "q1", Model: "alpha", Provider: "p1", Cost: 0.1},
+		{ID: "q2", Model: "beta", Provider: "p1", Cost: 0.2, SavedCost: 0.4, CacheHit: true},
+		{ID: "q3", Model: "alpha", Provider: "p2", Cost: 0.3},
+	} {
+		if err := repo.Record(ctx, rec); err != nil {
+			t.Fatalf("record %s: %v", rec.ID, err)
+		}
+	}
+
+	r := gin.New()
+	registerRequests(r.Group("/v1"), repo)
+	get := func(query string) (int, int, []usage.Record) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/admin/requests"+query, nil))
+		var body struct {
+			Total   int            `json:"total"`
+			Records []usage.Record `json:"records"`
+		}
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+		}
+		return w.Code, body.Total, body.Records
+	}
+
+	code, total, records := get("?model=alpha&limit=10")
+	if code != http.StatusOK || total != 2 || len(records) != 2 || records[0].ID != "q3" {
+		t.Fatalf("model filter: code=%d total=%d records=%+v", code, total, records)
+	}
+
+	code, total, records = get("?cache=hit")
+	if code != http.StatusOK || total != 1 || records[0].ID != "q2" {
+		t.Fatalf("cache hit: code=%d total=%d records=%+v", code, total, records)
+	}
+
+	code, total, records = get("?provider=p1&cache=miss")
+	if code != http.StatusOK || total != 1 || records[0].ID != "q1" {
+		t.Fatalf("provider+miss: code=%d total=%d records=%+v", code, total, records)
+	}
+
+	code, total, records = get("?q=q2")
+	if code != http.StatusOK || total != 1 || records[0].ID != "q2" {
+		t.Fatalf("search: code=%d total=%d records=%+v", code, total, records)
+	}
+
+	code, total, records = get("?limit=2&offset=1")
+	if code != http.StatusOK || total != 3 || len(records) != 2 || records[0].ID != "q2" || records[1].ID != "q1" {
+		t.Fatalf("pagination: code=%d total=%d records=%+v", code, total, records)
+	}
+
+	if code, _, _ := get("?cache=maybe"); code != http.StatusBadRequest {
+		t.Fatalf("invalid cache filter: want 400, got %d", code)
+	}
+}
