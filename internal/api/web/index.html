@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>LLM Gateway 用量看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 24px; }
+  #records { border-collapse: collapse; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  #records th, #records td { border: 1px solid #ddd; padding: 4px 8px; text-align: right; }
+  #records th:nth-child(1), #records td:nth-child(1),
+  #records th:nth-child(2), #records td:nth-child(2),
+  #records th:nth-child(3), #records td:nth-child(3) { text-align: left; }
+  #updated { color: #888; font-size: 12px; }
+  #conn { font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>LLM Gateway</h1>
+<p>本月花费：<span id="cost">-</span> 元 ｜ 本月节省：<span id="saved">-</span> 元 <span id="updated"></span> <span id="conn"></span></p>
+<canvas id="chart" height="120"></canvas>
+<p id="hint">首次使用：填入网关 token 点刷新，之后会记住并实时推送新调用（或访问 /?token=你的token 免填）：</p>
+<input id="token" placeholder="gateway token" />
+<button onclick="reload()">刷新</button>
+<h3>最近调用</h3>
+<table id="records">
+  <thead>
+    <tr><th>时间</th><th>模型</th><th>供应商</th><th>prompt</th><th>completion</th><th>成本(元)</th><th>节省(元)</th><th>缓存</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<script>
+let chart = null;
+let records = [];
+let monthCost = 0;
+let monthSaved = 0;
+let fallbackTimer = null;
+let streamAbort = null;
+let lastToken = '';
+
+function fmtYuan(v) {
+  return (Number(v) || 0).toFixed(6);
+}
+function setHint(text) {
+  document.getElementById('hint').textContent = text;
+}
+function setConn(text) {
+  document.getElementById('conn').textContent = text;
+}
+function tokenValue() {
+  return document.getElementById('token').value;
+}
+function renderNumbers() {
+  document.getElementById('cost').textContent = fmtYuan(monthCost);
+  document.getElementById('saved').textContent = fmtYuan(monthSaved);
+  document.getElementById('updated').textContent = '（更新于 ' + new Date().toLocaleTimeString() + '）';
+}
+function renderRecords() {
+  const tb = document.querySelector('#records tbody');
+  tb.innerHTML = '';
+  records.slice(0, 20).forEach(function (r) {
+    const tr = document.createElement('tr');
+    const cells = [
+      (r.created_at || '').replace('T', ' ').slice(0, 19),
+      r.model || '',
+      r.provider || '',
+      r.prompt_tokens || 0,
+      r.completion_tokens || 0,
+      fmtYuan(r.cost),
+      fmtYuan(r.saved_cost),
+      r.cache_hit ? '命中' : '—'
+    ];
+    cells.forEach(function (v) {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+}
+function updateChart() {
+  if (typeof Chart === 'undefined') {
+    return;
+  }
+  const rows = records.slice(0, 50).slice().reverse();
+  const labels = rows.map(function (r) { return (r.created_at || '').slice(11, 19); });
+  const costs = rows.map(function (r) { return r.cost || 0; });
+  if (!chart) {
+    chart = new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: { labels: labels, datasets: [{ label: '单次成本', data: costs }] },
+    });
+    return;
+  }
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = costs;
+  chart.update('none');
+}
+function applySnapshot(data) {
+  monthCost = data.month_cost || 0;
+  monthSaved = data.month_saved || 0;
+  records = data.records || [];
+  renderNumbers();
+  renderRecords();
+  updateChart();
+}
+async function loadSnapshot(silent) {
+  const token = tokenValue();
+  if (!token) {
+    return;
+  }
+  if (token !== lastToken) {
+    localStorage.setItem('gateway_token', token);
+    lastToken = token;
+  }
+  let res;
+  try {
+    res = await fetch('/v1/admin/usage', { headers: { Authorization: 'Bearer ' + token } });
+  } catch (e) {
+    if (!silent) {
+      alert('无法连接网关：' + e.message);
+    }
+    return;
+  }
+  if (!res.ok) {
+    if (!silent) {
+      alert('请求失败：HTTP ' + res.status + (res.status === 401 ? '（token 错误或未填）' : ''));
+    }
+    return;
+  }
+  applySnapshot(await res.json());
+}
+function onUsageRecord(rec) {
+  records.unshift(rec);
+  if (records.length > 50) {
+    records.length = 50;
+  }
+  monthCost += Number(rec.cost) || 0;
+  monthSaved += Number(rec.saved_cost) || 0;
+  renderNumbers();
+  renderRecords();
+  updateChart();
+}
+async function connectStream() {
+  const token = tokenValue();
+  if (!token || !window.fetch) {
+    return;
+  }
+  if (streamAbort) {
+    streamAbort.abort();
+  }
+  const ctrl = new AbortController();
+  streamAbort = ctrl;
+  let res;
+  try {
+    res = await fetch('/v1/admin/usage/stream', {
+      headers: { Authorization: 'Bearer ' + token },
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    return;
+  }
+  if (!res.ok || !res.body) {
+    return;
+  }
+  setConn('｜● 实时推送已连接');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      buf += decoder.decode(chunk.value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = block.split('\n').find(function (l) { return l.indexOf('data:') === 0; });
+        if (!line) {
+          continue;
+        }
+        try {
+          onUsageRecord(JSON.parse(line.slice(5).trim()));
+        } catch (e) {
+          /* ignore malformed event */
+        }
+      }
+    }
+  } catch (e) {
+    /* aborted or network error */
+  }
+  setConn('｜○ 实时推送断开，重连中…');
+  if (!ctrl.signal.aborted) {
+    setTimeout(function () {
+      if (!document.hidden) {
+        connectStream();
+      }
+    }, 3000);
+  }
+}
+function startFallback() {
+  if (fallbackTimer) {
+    clearInterval(fallbackTimer);
+  }
+  fallbackTimer = setInterval(function () {
+    if (!document.hidden) {
+      loadSnapshot(true);
+    }
+  }, 10 * 60 * 1000);
+}
+function reload() {
+  const token = tokenValue();
+  if (token && token !== lastToken) {
+    localStorage.setItem('gateway_token', token);
+    lastToken = token;
+  }
+  loadSnapshot(false);
+  connectStream();
+}
+function initToken() {
+  const params = new URLSearchParams(location.search);
+  const fromURL = params.get('token');
+  if (fromURL) {
+    localStorage.setItem('gateway_token', fromURL);
+    params.delete('token');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : ''));
+    return fromURL;
+  }
+  return localStorage.getItem('gateway_token') || '';
+}
+window.addEventListener('DOMContentLoaded', function () {
+  const token = initToken();
+  if (token) {
+    document.getElementById('token').value = token;
+    setHint('已自动加载：实时推送新调用，每 10 分钟兜底刷新一次（也可点刷新）：');
+    loadSnapshot(false);
+    connectStream();
+    startFallback();
+  }
+});
+</script>
+</body>
+</html>
