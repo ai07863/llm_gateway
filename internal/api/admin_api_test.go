@@ -218,3 +218,35 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("by_status: %+v", body.ByStatus)
 	}
 }
+
+func TestAdminEndpointsRequireToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(config.Settings{
+		GatewayToken: "tok",
+		DBPath:       "file:adminwire1?mode=memory&cache=shared",
+	})
+	for _, path := range []string{"/v1/admin/summary", "/v1/admin/requests", "/v1/admin/health"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: want 401, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestAdminEndpointsWorkWithToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(config.Settings{
+		GatewayToken: "tok",
+		DBPath:       "file:adminwire2?mode=memory&cache=shared",
+	})
+	for _, path := range []string{"/v1/admin/summary", "/v1/admin/requests", "/v1/admin/health"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: want 200, got %d: %s", path, w.Code, w.Body.String())
+		}
+	}
+}
