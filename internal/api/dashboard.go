@@ -10,6 +10,9 @@ import (
 //go:embed web/index.html
 var dashboardHTML string
 
+//go:embed web/chart.umd.min.js
+var chartJS []byte
+
 func registerDashboard(r *gin.Engine) {
 	r.GET("/", func(c *gin.Context) {
 		// Never cache the dashboard: browsers otherwise keep serving an old build
@@ -18,5 +21,9 @@ func registerDashboard(r *gin.Engine) {
 		c.Header("Pragma", "no-cache")
 		c.Header("Expires", "0")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(dashboardHTML))
+	})
+	r.GET("/assets/chart.js", func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		c.Data(http.StatusOK, "application/javascript; charset=utf-8", chartJS)
 	})
 }

@@ -103,3 +103,37 @@ func TestDashboardSupportsTokenQuery(t *testing.T) {
 		t.Fatal("dashboard should accept a ?token= URL param and strip it, so a bookmarked URL never prompts again")
 	}
 }
+
+func TestDashboardServesChartJS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/chart.js", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if w.Body.Len() < 100000 {
+		t.Fatalf("chart.js looks truncated: %d bytes", w.Body.Len())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Fatalf("content type: %q", ct)
+	}
+}
+
+func TestDashboardHasNoExternalAssets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := w.Body.String()
+	for _, bad := range []string{"cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("dashboard must not depend on %s", bad)
+		}
+	}
+	if !strings.Contains(body, "/assets/chart.js") {
+		t.Fatal("dashboard should load the vendored chart.js")
+	}
+}
