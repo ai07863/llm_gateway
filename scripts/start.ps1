@@ -33,10 +33,10 @@ $token = if ($tokenLine) { ($tokenLine -replace '^GATEWAY_TOKEN\s*=\s*', '').Tri
 if (-not $token) { Fail ".env 里 GATEWAY_TOKEN 为空，请先设置。" }
 
 $listenLine = $lines | Where-Object { $_ -match '^LISTEN_ADDR\s*=' } | Select-Object -First 1
-$listen = if ($listenLine) { ($listenLine -replace '^LISTEN_ADDR\s*=\s*', '').Trim() } else { ':8080' }
-$port = if ($listen -match ':(\d+)\s*$') { $Matches[1] } else { '8080' }
+$listen = if ($listenLine) { ($listenLine -replace '^LISTEN_ADDR\s*=\s*', '').Trim() } else { ':8090' }
+$port = if ($listen -match ':(\d+)\s*$') { $Matches[1] } else { '8090' }
 
-$badLines = @($lines | Where-Object { $_ -match '^\s*#.*\b[A-Z][A-Z0-9_]*\s*=' })
+$badLines = @($lines | Where-Object { $_ -match '^\s*#.*\b[A-Z][A-Z0-9_]*\s*=\s*\S' })
 if ($badLines.Count -gt 0) { Fail ".env 疑似换行损坏（注释行里出现了 KEY=VALUE）。请用编辑器修正换行后重试。" }
 $hasProvider = @($lines | Where-Object { $_ -match '^[ \t]*(DASHSCOPE|OPENAI|DEEPSEEK)_API_KEY[ \t]*=[ \t]*\S' }).Count -gt 0
 if (-not $hasProvider) { Fail ".env 里没有可用的 provider API_KEY（DASHSCOPE/OPENAI/DEEPSEEK），聊天会 502。请填写后重试。" }
@@ -53,7 +53,12 @@ foreach ($procId in $pids) {
     Write-Host "强制结束占用 $port 的进程：PID $($proc.Id) ($($proc.ProcessName))" -ForegroundColor Yellow
     Stop-Process -Id $proc.Id -Force
   } else {
-    Fail "端口 $port 被 $($proc.ProcessName) (PID $($proc.Id)) 占用。确认安全后可加 -Force 强制结束。"
+    $path = try { $proc.Path } catch { '' }
+    $extra = ''
+    if ($proc.ProcessName -match 'docker|wslrelay|vpnkit|com\.docker') {
+      $extra = " 这通常是 Docker 端口转发（宿主机 $port -> 容器端口）。`n       请把 .env 的 LISTEN_ADDR 改成其它端口（例如 :8090），或先停掉对应容器。"
+    }
+    Fail "端口 $port 被 $($proc.ProcessName) (PID $($proc.Id)) 占用。$path`n$extra`n       确认安全后可加 -Force 强制结束（注意：不要误杀 Docker）。"
   }
 }
 Start-Sleep -Milliseconds 400
@@ -109,4 +114,4 @@ Write-Host "健康检查:         http://localhost:$port/healthz"
 Write-Host "价格表来源:       $pricingSource"
 Write-Host "停止:             powershell -ExecutionPolicy Bypass -File scripts\stop.ps1"
 Write-Host ""
-Write-Host "现在可重启 opencode（默认模型 gateway/deepseek-v4.1-flash）。" -ForegroundColor Cyan
+Write-Host "opencode 无需重启（它每次请求时才连网关）；只有改过 opencode.json 才需要重启 opencode。" -ForegroundColor Cyan

@@ -81,12 +81,23 @@ docker compose up --build                 # 启动网关，监听 :8080
 pip install openai && python examples/python_openai_client.py   # 跑示例（先设 GATEWAY_TOKEN）
 ```
 
-Windows 一键启动（自动释放 8080、编译、后台启动，并打印免填 token 的看板链接）：
+Windows 一键启动（读取 `.env` 的 `LISTEN_ADDR`、编译、后台启动，并打印免填 token 的看板链接）：
 
 ```powershell
 .\start.cmd            # 或: powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 .\scripts\stop.ps1     # 停止
+.\status.cmd           # 查看端口 / PID / 健康状态
 ```
+
+登录自启 + 崩溃自动拉起（可选，计划任务，无需第三方工具）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-autostart.ps1
+```
+
+> 端口被占用时脚本会直接报出占用进程。若 `:8080` 被 Docker 转发占用（`/healthz` 也会返回 ok，容易误判），把 `.env` 的 `LISTEN_ADDR` 改成其它端口（如 `:8090`）并同步修改客户端 baseURL。
+> 客户端（如 opencode）只在发送请求时才连接网关，**重启网关不需要重启客户端**；只有修改了客户端配置才需要重启客户端。
 
 ### 1. 准备配置
 
