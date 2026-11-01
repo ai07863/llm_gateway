@@ -52,6 +52,8 @@
   <button onclick="refreshAll()">刷新</button>
 </header>
 <main>
+  <div id="error-bar" class="card hidden" style="border-color:var(--bad);color:var(--bad)"></div>
+
   <div id="token-bar" class="card">
     <div class="row">
       <input id="token" placeholder="gateway token" style="flex:1;min-width:240px" />
@@ -104,10 +106,11 @@
     <div class="card">
       <h2>运行健康</h2>
       <div class="row" style="gap:24px">
-        <div><div class="muted">请求总数</div><div class="value" id="h-req">-</div></div>
+        <div><div class="muted">本次请求数</div><div class="value" id="h-req">-</div></div>
         <div><div class="muted">错误率</div><div class="value" id="h-err">-</div></div>
         <div><div class="muted">P50</div><div class="value" id="h-p50">-</div></div>
         <div><div class="muted">P95</div><div class="value" id="h-p95">-</div></div>
+        <div><div class="muted">本次运行</div><div class="value" id="h-uptime">-</div></div>
       </div>
       <table id="status" style="margin-top:12px"><thead><tr><th>供应商</th><th>状态</th><th>次数</th></tr></thead><tbody></tbody></table>
     </div>
@@ -153,10 +156,21 @@ function esc(v) {
   })[ch]);
 }
 function num(v) { return Number(v) || 0; }
-function money(v) { return num(v).toFixed(2); }
+function money(v) {
+  const n = num(v);
+  // 0.002 元被 toFixed(2) 显示成 0.00，小额成本改用 4 位小数。
+  return n !== 0 && Math.abs(n) < 0.01 ? n.toFixed(4) : n.toFixed(2);
+}
 function pct(v) { return (num(v) * 100).toFixed(1) + '%'; }
 function int(v) { return num(v).toLocaleString('zh-CN'); }
 function ms(v) { const n = num(v); return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ms'; }
+function uptime(v) {
+  const s = num(v);
+  if (s < 60) return s + ' 秒';
+  if (s < 3600) return Math.floor(s / 60) + ' 分钟';
+  if (s < 86400) return (s / 3600).toFixed(1) + ' 小时';
+  return (s / 86400).toFixed(1) + ' 天';
+}
 
 function initToken() {
   const params = new URLSearchParams(window.location.search);
@@ -183,17 +197,35 @@ function saveToken() {
 }
 
 async function api(path) {
-  const res = await fetch(path, { headers: { Authorization: 'Bearer ' + S.token } });
+  let res;
+  try {
+    res = await fetch(path, { headers: { Authorization: 'Bearer ' + S.token } });
+  } catch (e) {
+    throw new Error('网络错误，无法连接网关');
+  }
   if (res.status === 401) {
     $('token-bar').classList.remove('hidden');
     throw new Error('unauthorized');
   }
-  if (!res.ok) throw new Error(path + ' -> ' + res.status);
-  return res.json();
+  if (!res.ok) throw new Error(path + ' 返回 HTTP ' + res.status);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error('响应解析失败：' + path);
+  }
 }
 
-function setConn(ok) {
-  $('conn').innerHTML = '<span class="dot' + (ok ? ' on' : '') + '"></span>' + (ok ? '已连接' : '未连接');
+function showError(msg) {
+  $('error-bar').textContent = '加载失败：' + msg;
+  $('error-bar').classList.remove('hidden');
+}
+
+function hideError() {
+  $('error-bar').classList.add('hidden');
+}
+
+function setConn(ok, label) {
+  $('conn').innerHTML = '<span class="dot' + (ok ? ' on' : '') + '"></span>' + (label || (ok ? '已连接' : '未连接'));
 }
 function stamp() {
   $('updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -373,9 +405,12 @@ async function loadSummary() {
   if (!S.token) return;
   try {
     renderSummary(await api('/v1/admin/summary'));
+    hideError();
     stamp();
   } catch (e) {
-    if (e.message !== 'unauthorized') setConn(false);
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
   }
 }
 
@@ -387,13 +422,17 @@ async function loadHealth() {
     $('h-err').textContent = pct(h.error_rate);
     $('h-p50').textContent = ms(h.latency_ms.p50);
     $('h-p95').textContent = ms(h.latency_ms.p95);
+    $('h-uptime').textContent = uptime(h.uptime_seconds);
     const tb = $('status').querySelector('tbody');
     const rows = (h.by_status || []).slice().sort((a, b) => b.count - a.count).slice(0, 8);
     tb.innerHTML = rows.length
       ? rows.map((r) => '<tr><td>' + esc(r.provider || '-') + '</td><td>' + esc(r.status) + '</td><td>' + int(r.count) + '</td></tr>').join('')
       : '<tr><td colspan="3" class="muted">暂无流量</td></tr>';
+    hideError();
   } catch (e) {
-    if (e.message !== 'unauthorized') setConn(false);
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
   }
 }
 
@@ -437,8 +476,11 @@ async function loadRecords() {
     $('page-info').textContent = '第 ' + (S.page + 1) + '/' + pages + ' 页 · 共 ' + S.total + ' 条';
     $('prev').disabled = S.page <= 0;
     $('next').disabled = S.page >= pages - 1;
+    hideError();
   } catch (e) {
-    if (e.message !== 'unauthorized') setConn(false);
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
   }
 }
 
@@ -477,11 +519,30 @@ function scheduleRefresh() {
   }, 500);
 }
 
+let streamRetry = 0;
+let streamTimer = null;
+
 function stopStream() {
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
   if (S.streamAbort) {
     S.streamAbort.abort();
     S.streamAbort = null;
   }
+}
+
+function scheduleReconnect() {
+  if (!S.token) return;
+  streamRetry = Math.min(streamRetry + 1, 7);
+  const delay = Math.min(30000, 1000 * Math.pow(2, streamRetry - 1));
+  setConn(false, '重连中… ' + Math.round(delay / 1000) + 's');
+  if (streamTimer) clearTimeout(streamTimer);
+  streamTimer = setTimeout(() => {
+    streamTimer = null;
+    startStream();
+  }, delay);
 }
 
 async function startStream() {
@@ -494,6 +555,7 @@ async function startStream() {
       signal: S.streamAbort.signal,
     });
     if (!res.ok) throw new Error('stream ' + res.status);
+    streamRetry = 0;
     setConn(true);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -508,8 +570,11 @@ async function startStream() {
     }
     setConn(false);
   } catch (e) {
-    if (e.name !== 'AbortError') setConn(false);
+    // 主动 abort（页面刷新数据/二次 startStream）不算断线，不重连。
+    if (e.name === 'AbortError') return;
+    setConn(false);
   }
+  scheduleReconnect();
 }
 
 function boot() {
