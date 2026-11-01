@@ -161,3 +161,32 @@ func TestLoadRetentionDays(t *testing.T) {
 		t.Fatalf("invalid value must fall back to 0, got %d", s.RetentionDays)
 	}
 }
+func TestLoadAdditionalModels(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t, "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "DASHSCOPE_API_KEY",
+		"DASHSCOPE_BASE_URL", "DASHSCOPE_MODEL", "DASHSCOPE_MODELS", "DASHSCOPE_EMBED_MODEL")
+	t.Setenv("DASHSCOPE_API_KEY", "sk-test")
+	t.Setenv("DASHSCOPE_MODEL", "deepseek-v4.1-flash")
+	t.Setenv("DASHSCOPE_MODELS", " deepseek-v4.1-flash-1017 , ,deepseek-v4.1-flash ,other-model ")
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	var got []string
+	for _, p := range s.Providers {
+		if p.Name == "dashscope" {
+			got = p.Models
+		}
+	}
+	want := []string{"deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "other-model"}
+	if len(got) != len(want) {
+		t.Fatalf("want models %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("want models %v, got %v", want, got)
+		}
+	}
+}

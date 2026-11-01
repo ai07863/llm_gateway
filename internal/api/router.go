@@ -38,9 +38,11 @@ func NewRouter(s config.Settings) *gin.Engine {
 	modelCandidates := make([]budget.Model, 0, len(s.Providers))
 	for _, pc := range s.Providers {
 		providers = append(providers, provider.NewOpenAICompat(pc))
-		models = append(models, pc.Model)
-		if score, ok := pricing.Score(pc.Model); ok {
-			modelCandidates = append(modelCandidates, budget.Model{Name: pc.Model, Price: score})
+		for _, model := range pc.ModelList() {
+			models = append(models, model)
+			if score, ok := pricing.Score(model); ok {
+				modelCandidates = append(modelCandidates, budget.Model{Name: model, Price: score})
+			}
 		}
 	}
 	repo, err := usage.NewSQLite(s.DBPath)
@@ -102,7 +104,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 	targetsForModel := func(model string) []proxy.Target {
 		var owners, others []proxy.Target
 		for i, pc := range s.Providers {
-			if pc.Model == model {
+			if pc.HasModel(model) {
 				owners = append(owners, proxy.Target{Provider: providers[i], Model: model})
 			} else {
 				others = append(others, proxy.Target{Provider: providers[i], Model: pc.Model})

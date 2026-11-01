@@ -125,6 +125,12 @@ DASHSCOPE_EMBED_MODEL=text-embedding-v3
 
 如需 DeepSeek / OpenAI，另填 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 即可（见 `configs/.env.example`）。
 
+一个 provider 可以挂多个模型：用 `DASHSCOPE_MODELS` / `DEEPSEEK_MODELS` / `OPENAI_MODELS`（逗号分隔）追加，主模型自动包含。追加的模型会出现在 `/v1/models`，请求时按所属 provider 路由；未登记的模型仍会落到第一个 provider（兼容旧行为）。
+
+```dotenv
+DASHSCOPE_MODELS=deepseek-v4.1-flash,deepseek-v4.1-flash-1017
+```
+
 ### 2. 用 Docker 一键启动
 
 ```bash

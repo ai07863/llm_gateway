@@ -78,9 +78,17 @@ func TestScoreUsesPeakRate(t *testing.T) {
 }
 
 func TestDefaultTableHasModels(t *testing.T) {
-	for _, m := range []string{"deepseek-chat", "gpt-4o-mini", "qwen-turbo", "qwen-plus", "qwen-max", "qwen3.8-flash", "deepseek-v4.1-flash"} {
+	for _, m := range []string{"deepseek-chat", "gpt-4o-mini", "qwen-turbo", "qwen-plus", "qwen-max", "qwen3.8-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"} {
 		if _, ok := Score(m); !ok {
 			t.Fatalf("embedded default table missing %q", m)
 		}
+	}
+}
+
+func TestDatedSnapshotSharesFlashPricing(t *testing.T) {
+	want := Cost("deepseek-v4.1-flash", 1_000_000, 1_000_000)
+	got := Cost("deepseek-v4.1-flash-1017", 1_000_000, 1_000_000)
+	if got != want {
+		t.Fatalf("dated snapshot must reuse flash pricing: want %v, got %v", want, got)
 	}
 }
