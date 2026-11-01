@@ -41,32 +41,34 @@ if ($badLines.Count -gt 0) { Fail ".env 疑似换行损坏（注释行里出现�
 $hasProvider = @($lines | Where-Object { $_ -match '^[ \t]*(DASHSCOPE|OPENAI|DEEPSEEK)_API_KEY[ \t]*=[ \t]*\S' }).Count -gt 0
 if (-not $hasProvider) { Fail ".env 里没有可用的 provider API_KEY（DASHSCOPE/OPENAI/DEEPSEEK），聊天会 502。请填写后重试。" }
 
-# 2) 释放端口
+# 2) 释放端口（只结束本目录的 bin\gateway.exe，避免误杀 go/docker 等进程）
+$binDir = Join-Path $root 'bin'
+$exe = Join-Path $binDir 'gateway.exe'
+$exeFull = [System.IO.Path]::GetFullPath($exe)
 $pids = @(netstat -ano | Select-String ":$port\s+.*LISTENING" | ForEach-Object { ($_.ToString() -split '\s+')[-1] } | Sort-Object -Unique)
 foreach ($procId in $pids) {
   $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
   if (-not $proc) { continue }
-  if ($proc.ProcessName -in @('gateway', 'server', 'go')) {
-    Write-Host "结束旧网关：PID $($proc.Id) ($($proc.ProcessName))" -ForegroundColor DarkGray
+  $path = try { $proc.Path } catch { '' }
+  $isOurGateway = $path -and ([System.IO.Path]::GetFullPath($path) -eq $exeFull)
+  if ($isOurGateway) {
+    Write-Host "结束旧网关：PID $($proc.Id) ($path)" -ForegroundColor DarkGray
     Stop-Process -Id $proc.Id -Force
   } elseif ($Force) {
     Write-Host "强制结束占用 $port 的进程：PID $($proc.Id) ($($proc.ProcessName))" -ForegroundColor Yellow
     Stop-Process -Id $proc.Id -Force
   } else {
-    $path = try { $proc.Path } catch { '' }
     $extra = ''
     if ($proc.ProcessName -match 'docker|wslrelay|vpnkit|com\.docker') {
       $extra = " 这通常是 Docker 端口转发（宿主机 $port -> 容器端口）。`n       请把 .env 的 LISTEN_ADDR 改成其它端口（例如 :8090），或先停掉对应容器。"
     }
-    Fail "端口 $port 被 $($proc.ProcessName) (PID $($proc.Id)) 占用。$path`n$extra`n       确认安全后可加 -Force 强制结束（注意：不要误杀 Docker）。"
+    Fail "端口 $port 被 $($proc.ProcessName) (PID $($proc.Id)) 占用。$path`n$extra`n       确认安全后可加 -Force 强制结束（注意：不要误杀 Docker）。`n       安全做法：改 .env 的 LISTEN_ADDR 到空闲端口，或手动结束该进程。"
   }
 }
 Start-Sleep -Milliseconds 400
 
 # 3) 编译
-$binDir = Join-Path $root 'bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-$exe = Join-Path $binDir 'gateway.exe'
 if (-not $NoBuild) {
   Write-Host "编译中..." -ForegroundColor DarkGray
   & go build -o $exe ./cmd/server
