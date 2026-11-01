@@ -92,12 +92,20 @@ Windows 一键启动（读取 `.env` 的 `LISTEN_ADDR`、编译、后台启动�
 登录自启 + 崩溃自动拉起（可选，计划任务，无需第三方工具）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1              # 默认注册计划任务（需管理员）
+powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1 -StartupFolder  # 免管理员：写入用户启动文件夹
 powershell -ExecutionPolicy Bypass -File scripts\uninstall-autostart.ps1
 ```
 
+守护进程（`scripts\supervise.ps1`）的行为：
+
+- 单实例锁：重复启动的守护进程会直接退出，不会出现两个守护抢着拉起网关。
+- 日志：`bin\supervisor.log`，超过 1MB 自动轮转为 `bin\supervisor.log.old`。
+- `start.ps1` 释放端口时只结束**本目录的** `bin\gateway.exe`，不会误杀 `go` / Docker 等进程；其它占用需显式加 `-Force`（会提示 Docker 转发风险）。
+
 > 端口被占用时脚本会直接报出占用进程。若 `:8080` 被 Docker 转发占用（`/healthz` 也会返回 ok，容易误判），把 `.env` 的 `LISTEN_ADDR` 改成其它端口（如 `:8090`）并同步修改客户端 baseURL。
 > 客户端（如 opencode）只在发送请求时才连接网关，**重启网关不需要重启客户端**；只有修改了客户端配置才需要重启客户端。
+> 注意：若你的 AI 助手本身也走这个网关，重启网关会中断它正在进行的请求，先确认再操作。
 
 ### 1. 准备配置
 
@@ -135,6 +143,8 @@ go run ./cmd/server
 ```
 
 配置全部来自环境变量（`GATEWAY_TOKEN`、`DB_PATH`、`*_API_KEY` 等）。启动时若当前工作目录存在 `.env`，会被自动加载；不存在则直接从 shell 环境读取。当前**不**支持 YAML 配置文件（`configs/config.yaml` 尚未实现）。
+
+数据保留：`RETENTION_DAYS`（默认 `0` = 永久保留）。设为正数时，网关启动时及之后每天清理早于该天数的用量记录，避免 SQLite 无限增长。文件库自动启用 WAL + `busy_timeout=5000`，看板读取不会阻塞写入（`:memory:` 测试库仍用单连接）。
 
 ## API 示例
 
