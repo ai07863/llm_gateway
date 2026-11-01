@@ -53,6 +53,11 @@ func buildBody(req ChatRequest, stream bool) ([]byte, error) {
 	if len(req.Raw) == 0 {
 		r := req
 		r.Stream = stream || req.Stream
+		for i := range r.Messages {
+			if r.Messages[i].Role == "developer" {
+				r.Messages[i].Role = "system"
+			}
+		}
 		if stream {
 			return json.Marshal(struct {
 				ChatRequest
@@ -70,11 +75,44 @@ func buildBody(req ChatRequest, stream bool) ([]byte, error) {
 		return nil, err
 	}
 	m["model"] = model
+	if rawMsgs, ok := m["messages"]; ok {
+		if fixed, changed := normalizeDeveloperRole(rawMsgs); changed {
+			m["messages"] = fixed
+		}
+	}
 	if stream {
 		m["stream"] = json.RawMessage("true")
 		m["stream_options"] = json.RawMessage(`{"include_usage":true}`)
 	}
 	return json.Marshal(m)
+}
+
+// normalizeDeveloperRole rewrites the OpenAI "developer" role to "system".
+// Chat Completions treats them as the same thing, but most OpenAI-compatible
+// upstreams (e.g. DashScope) reject "developer" outright. Only the role field
+// is touched; content arrays, tool_calls, name and any other fields survive.
+func normalizeDeveloperRole(raw json.RawMessage) (json.RawMessage, bool) {
+	var msgs []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return raw, false
+	}
+	changed := false
+	for _, msg := range msgs {
+		var role string
+		if err := json.Unmarshal(msg["role"], &role); err != nil || role != "developer" {
+			continue
+		}
+		msg["role"] = json.RawMessage(`"system"`)
+		changed = true
+	}
+	if !changed {
+		return raw, false
+	}
+	out, err := json.Marshal(msgs)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
 }
 
 func (p *openAICompat) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
