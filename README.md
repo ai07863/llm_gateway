@@ -174,7 +174,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 | GET | `/v1/models` | 列出已配置的模型 |
 | GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost`、当月节省 `month_saved` + 最近记录 `records` |
 | GET | `/v1/admin/pricing` | 查看当前价格表（`source` / `last_refresh` / `models`） |
-| GET | `/metrics` | Prometheus 指标 |
+| GET | `/metrics` | Prometheus 指标（需 `Authorization: Bearer <token>`） |
 | GET | `/` | 极简用量看板页 |
 | GET | `/healthz` | 健康检查 |
 
@@ -196,10 +196,27 @@ curl http://localhost:8080/v1/admin/usage -H "Authorization: Bearer change-me"
 }
 ```
 
-`/metrics` 暴露的关键指标：
+`/metrics` 需要鉴权（与 `/v1` 相同的 token），未带 token 返回 401：
+
+```bash
+curl http://localhost:8090/metrics -H "Authorization: Bearer <token>"
+```
+
+Prometheus 抓取配置示例：
+
+```yaml
+scrape_configs:
+  - job_name: llm-gateway
+    authorization:
+      credentials: <token>
+    static_configs:
+      - targets: ["localhost:8090"]
+```
+
+暴露的关键指标：
 
 - `gateway_requests_total{provider,status}`：按 provider / 状态码的请求计数。
-- `gateway_request_duration_seconds{provider}`：调用延迟直方图。
+- `gateway_request_duration_seconds{provider}`：调用延迟直方图（分桶 0.05s–120s）。
 - `gateway_tokens_total{provider,kind}`：按 provider 累计的 prompt / completion token。
 
 ## 接入自己的项目
@@ -258,7 +275,7 @@ go test ./...
 1. `docker compose up --build`，`curl /healthz` 返回 `{"status":"ok"}`。
 2. 用真实 key 发一次非流式 + 一次流式请求，确认有回复。
 3. 访问 `/v1/admin/usage`，确认出现用量记录与当月成本；重复发一次相同请求触发缓存命中，确认用量记录出现 `cache_hit=true`（且 `saved_cost` / `month_saved` 大于 0）。
-4. 访问 `/metrics`，确认 `gateway_requests_total` 等指标有数。
+4. 带 token 访问 `/metrics`，确认 `gateway_requests_total` 等指标有数；不带 token 应返回 401。
 5. 打开 `/`，确认看板能出图。
 
 ## 技术栈与取舍

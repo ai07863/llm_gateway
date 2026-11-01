@@ -208,3 +208,51 @@ func TestSQLiteQueryFiltersAndPaginates(t *testing.T) {
 		t.Fatalf("pagination: total=%d records=%+v", total, records)
 	}
 }
+
+func TestMonthBounds(t *testing.T) {
+	start, end, err := monthBounds("2026-10")
+	if err != nil {
+		t.Fatalf("bounds: %v", err)
+	}
+	if start != "2026-10-01 00:00:00" || end != "2026-11-01 00:00:00" {
+		t.Fatalf("unexpected bounds: %q .. %q", start, end)
+	}
+	if _, _, err := monthBounds("2026-13"); err == nil {
+		t.Fatal("want error for invalid month")
+	}
+}
+
+func TestSummaryHonoursMonthBoundaries(t *testing.T) {
+	repo, err := NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer repo.Close()
+
+	ctx := context.Background()
+	at := func(ts string) time.Time {
+		tm, perr := time.Parse("2006-01-02 15:04:05", ts)
+		if perr != nil {
+			t.Fatalf("parse %q: %v", ts, perr)
+		}
+		return tm
+	}
+	for _, rec := range []Record{
+		{ID: "before", Model: "m", Provider: "p", Cost: 1, CreatedAt: at("2026-09-30 23:59:59")},
+		{ID: "start", Model: "m", Provider: "p", Cost: 2, CreatedAt: at("2026-10-01 00:00:00")},
+		{ID: "end", Model: "m", Provider: "p", Cost: 4, CreatedAt: at("2026-10-31 23:59:59")},
+		{ID: "after", Model: "m", Provider: "p", Cost: 8, CreatedAt: at("2026-11-01 00:00:00")},
+	} {
+		if err := repo.Record(ctx, rec); err != nil {
+			t.Fatalf("record %s: %v", rec.ID, err)
+		}
+	}
+
+	sum, err := repo.Summary(ctx, "2026-10")
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if sum.Totals.Cost != 6 || sum.Totals.Requests != 2 {
+		t.Fatalf("month must include only October rows: %+v", sum.Totals)
+	}
+}

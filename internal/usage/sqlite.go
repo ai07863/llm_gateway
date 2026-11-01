@@ -11,6 +11,16 @@ import (
 
 type sqliteRepo struct{ db *sql.DB }
 
+// monthBounds returns the half-open [start, end) timestamps of a YYYY-MM month.
+// Range comparisons keep idx_usage_created_at usable, unlike substr() filters.
+func monthBounds(month string) (string, string, error) {
+	start, err := time.Parse("2006-01", month)
+	if err != nil {
+		return "", "", err
+	}
+	return start.Format("2006-01-02 15:04:05"), start.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"), nil
+}
+
 func NewSQLite(path string) (Repo, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -55,16 +65,24 @@ func (r *sqliteRepo) Record(ctx context.Context, rec Record) error {
 }
 
 func (r *sqliteRepo) MonthlyCost(ctx context.Context, yyyymm string) (float64, error) {
+	start, end, err := monthBounds(yyyymm)
+	if err != nil {
+		return 0, err
+	}
 	var total sql.NullFloat64
-	err := r.db.QueryRowContext(ctx,
-		`SELECT SUM(cost) FROM usage_records WHERE substr(created_at,1,7) = ?`, yyyymm).Scan(&total)
+	err = r.db.QueryRowContext(ctx,
+		`SELECT SUM(cost) FROM usage_records WHERE created_at >= ? AND created_at < ?`, start, end).Scan(&total)
 	return total.Float64, err
 }
 
 func (r *sqliteRepo) MonthlySaved(ctx context.Context, yyyymm string) (float64, error) {
+	start, end, err := monthBounds(yyyymm)
+	if err != nil {
+		return 0, err
+	}
 	var total sql.NullFloat64
-	err := r.db.QueryRowContext(ctx,
-		`SELECT SUM(saved_cost) FROM usage_records WHERE substr(created_at,1,7) = ?`, yyyymm).Scan(&total)
+	err = r.db.QueryRowContext(ctx,
+		`SELECT SUM(saved_cost) FROM usage_records WHERE created_at >= ? AND created_at < ?`, start, end).Scan(&total)
 	return total.Float64, err
 }
 
@@ -135,8 +153,13 @@ func (r *sqliteRepo) Summary(ctx context.Context, month string) (Summary, error)
 		ByHour:     []HourBucket{},
 	}
 
+	start, end, err := monthBounds(month)
+	if err != nil {
+		return out, err
+	}
+
 	totals, err := scanTotals(r.db.QueryRowContext(ctx,
-		`SELECT `+aggColumns+` FROM usage_records WHERE substr(created_at,1,7) = ?`, month))
+		`SELECT `+aggColumns+` FROM usage_records WHERE created_at >= ? AND created_at < ?`, start, end))
 	if err != nil {
 		return out, err
 	}
@@ -144,7 +167,8 @@ func (r *sqliteRepo) Summary(ctx context.Context, month string) (Summary, error)
 
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT model, `+aggColumns+` FROM usage_records
-		 WHERE substr(created_at,1,7) = ? GROUP BY model ORDER BY SUM(cost) DESC`, month)
+		 WHERE created_at >= ? AND created_at < ?
+		 GROUP BY model ORDER BY SUM(cost) DESC`, start, end)
 	if err != nil {
 		return out, err
 	}
@@ -163,7 +187,8 @@ func (r *sqliteRepo) Summary(ctx context.Context, month string) (Summary, error)
 
 	rows, err = r.db.QueryContext(ctx,
 		`SELECT provider, `+aggColumns+` FROM usage_records
-		 WHERE substr(created_at,1,7) = ? GROUP BY provider ORDER BY SUM(cost) DESC`, month)
+		 WHERE created_at >= ? AND created_at < ?
+		 GROUP BY provider ORDER BY SUM(cost) DESC`, start, end)
 	if err != nil {
 		return out, err
 	}
@@ -182,7 +207,8 @@ func (r *sqliteRepo) Summary(ctx context.Context, month string) (Summary, error)
 
 	rows, err = r.db.QueryContext(ctx,
 		`SELECT substr(created_at,1,10) AS day, `+aggColumns+` FROM usage_records
-		 WHERE substr(created_at,1,7) = ? GROUP BY day ORDER BY day`, month)
+		 WHERE created_at >= ? AND created_at < ?
+		 GROUP BY day ORDER BY day`, start, end)
 	if err != nil {
 		return out, err
 	}

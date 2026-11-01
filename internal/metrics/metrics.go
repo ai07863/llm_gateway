@@ -4,28 +4,34 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+var latencyBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120}
+
 type Registry struct {
-	reg      *prometheus.Registry
-	Requests *prometheus.CounterVec
-	Latency  *prometheus.HistogramVec
-	Tokens   *prometheus.CounterVec
+	reg       *prometheus.Registry
+	startedAt time.Time
+	Requests  *prometheus.CounterVec
+	Latency   *prometheus.HistogramVec
+	Tokens    *prometheus.CounterVec
 }
 
 func New() *Registry {
 	reg := prometheus.NewRegistry()
 	m := &Registry{
-		reg: reg,
+		reg:       reg,
+		startedAt: time.Now(),
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_requests_total", Help: "total requests",
 		}, []string{"provider", "status"}),
 		Latency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_request_duration_seconds", Help: "request latency",
+			Buckets: latencyBuckets,
 		}, []string{"provider"}),
 		Tokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_tokens_total", Help: "tokens used",
@@ -57,10 +63,16 @@ type Snapshot struct {
 	ErrorRate     float64       `json:"error_rate"`
 	LatencyMS     LatencyMS     `json:"latency_ms"`
 	ByStatus      []StatusCount `json:"by_status"`
+	StartedAt     time.Time     `json:"started_at"`
+	UptimeSeconds int64         `json:"uptime_seconds"`
 }
 
 func (m *Registry) Snapshot() Snapshot {
-	out := Snapshot{ByStatus: []StatusCount{}}
+	out := Snapshot{
+		ByStatus:      []StatusCount{},
+		StartedAt:     m.startedAt,
+		UptimeSeconds: int64(time.Since(m.startedAt).Seconds()),
+	}
 	families, err := m.reg.Gather()
 	if err != nil {
 		return out

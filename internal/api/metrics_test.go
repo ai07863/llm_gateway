@@ -38,8 +38,10 @@ func TestChatSuccessRecordsMetrics(t *testing.T) {
 		t.Fatalf("want 200, got %d; body=%q", w.Code, w.Body.String())
 	}
 
+	mreq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	mreq.Header.Set("Authorization", "Bearer tok")
 	mw := httptest.NewRecorder()
-	r.ServeHTTP(mw, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	r.ServeHTTP(mw, mreq)
 	out := mw.Body.String()
 
 	if !strings.Contains(out, `gateway_requests_total{provider="up",status="200"} 1`) {

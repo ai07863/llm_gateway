@@ -104,6 +104,27 @@ func TestDashboardSupportsTokenQuery(t *testing.T) {
 	}
 }
 
+func TestDashboardSendsHardeningHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerDashboard(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("referrer policy: %q", got)
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'self'", "connect-src 'self'", "frame-ancestors 'none'", "img-src 'self' data:"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("csp missing %q: %q", want, csp)
+		}
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("x-content-type-options: %q", got)
+	}
+}
+
 func TestDashboardServesChartJS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

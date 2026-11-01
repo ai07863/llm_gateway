@@ -28,7 +28,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	m := metrics.New()
-	r.GET("/metrics", m.Handler())
+	r.GET("/metrics", AuthMiddleware(s.GatewayToken), m.Handler())
 
 	v1 := r.Group("/v1", AuthMiddleware(s.GatewayToken))
 

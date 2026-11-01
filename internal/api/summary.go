@@ -38,8 +38,8 @@ func registerSummary(v1 *gin.RouterGroup, repo usage.Repo, s config.Settings) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error()}})
 			return
 		}
-		cost, _ := repo.MonthlyCost(c.Request.Context(), month)
-		saved, _ := repo.MonthlySaved(c.Request.Context(), month)
+		cost := summary.Totals.Cost
+		saved := summary.Totals.Saved
 
 		budget := budgetStatus{
 			Limit:     s.BudgetMonthlyLimit,

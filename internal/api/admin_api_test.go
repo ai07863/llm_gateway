@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -216,6 +217,84 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if len(body.ByStatus) != 2 {
 		t.Fatalf("by_status: %+v", body.ByStatus)
+	}
+}
+
+type snapshotRepo struct {
+	usage.Repo
+	summary      usage.Summary
+	monthlyCalls int
+}
+
+func (r *snapshotRepo) Summary(ctx context.Context, month string) (usage.Summary, error) {
+	return r.summary, nil
+}
+
+func (r *snapshotRepo) MonthlyCost(ctx context.Context, month string) (float64, error) {
+	r.monthlyCalls++
+	return 999, nil
+}
+
+func (r *snapshotRepo) MonthlySaved(ctx context.Context, month string) (float64, error) {
+	r.monthlyCalls++
+	return 999, nil
+}
+
+func TestSummaryBudgetUsesSameSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &snapshotRepo{summary: usage.Summary{
+		Month:  "2026-10",
+		Totals: usage.Totals{Cost: 0.25, Saved: 0.5},
+	}}
+
+	r := gin.New()
+	registerSummary(r.Group("/v1"), repo, config.Settings{BudgetMonthlyLimit: 10})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/admin/summary?month=2026-10", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Budget struct {
+			Cost  float64 `json:"cost"`
+			Saved float64 `json:"saved"`
+		} `json:"budget"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Budget.Cost != 0.25 || body.Budget.Saved != 0.5 {
+		t.Fatalf("budget must reuse summary totals: %+v", body.Budget)
+	}
+	if repo.monthlyCalls != 0 {
+		t.Fatalf("summary endpoint must not issue extra monthly queries, got %d", repo.monthlyCalls)
+	}
+}
+
+func TestMetricsEndpointRequiresToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := NewRouter(config.Settings{
+		GatewayToken: "tok",
+		DBPath:       "file:metricsauth?mode=memory&cache=shared",
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 without token, got %d", w.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200 with token, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "<html") {
+		t.Fatal("metrics endpoint must not serve the dashboard")
 	}
 }
 

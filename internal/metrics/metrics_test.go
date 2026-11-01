@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,6 +76,30 @@ func TestSnapshotLatencyPercentiles(t *testing.T) {
 	}
 	if s.LatencyMS.P50 <= 0 || s.LatencyMS.P50 >= s.LatencyMS.P95 {
 		t.Fatalf("percentiles: %+v", s.LatencyMS)
+	}
+}
+
+func TestSnapshotKeepsLongLatencies(t *testing.T) {
+	reg := New()
+	reg.Latency.WithLabelValues("p1").Observe(20)
+
+	s := reg.Snapshot()
+	if s.LatencyMS.P95 <= 10000 {
+		t.Fatalf("p95 clamped at 10s, want >10000ms: %+v", s.LatencyMS)
+	}
+}
+
+func TestSnapshotReportsUptime(t *testing.T) {
+	reg := New()
+	s := reg.Snapshot()
+	if s.StartedAt.IsZero() {
+		t.Fatal("started_at must be set")
+	}
+	if s.UptimeSeconds < 0 {
+		t.Fatalf("uptime_seconds must be non-negative: %d", s.UptimeSeconds)
+	}
+	if time.Since(s.StartedAt) < time.Duration(s.UptimeSeconds)*time.Second-2*time.Second {
+		t.Fatalf("started_at/uptime inconsistent: %v / %d", s.StartedAt, s.UptimeSeconds)
 	}
 }
 
