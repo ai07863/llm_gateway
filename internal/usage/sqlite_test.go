@@ -3,6 +3,8 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -254,5 +256,65 @@ func TestSummaryHonoursMonthBoundaries(t *testing.T) {
 	}
 	if sum.Totals.Cost != 6 || sum.Totals.Requests != 2 {
 		t.Fatalf("month must include only October rows: %+v", sum.Totals)
+	}
+}
+
+func TestSQLiteFileEnablesWALAndBusyTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.db")
+	repo, err := NewSQLite(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer repo.Close()
+
+	sr := repo.(*sqliteRepo)
+	var mode string
+	if err := sr.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("journal_mode: %v", err)
+	}
+	if strings.ToLower(mode) != "wal" {
+		t.Fatalf("want WAL journal mode, got %q", mode)
+	}
+	var timeout int
+	if err := sr.db.QueryRow(`PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatalf("busy_timeout: %v", err)
+	}
+	if timeout < 1000 {
+		t.Fatalf("busy_timeout too small: %d", timeout)
+	}
+}
+
+func TestDeleteBefore(t *testing.T) {
+	repo, err := NewSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer repo.Close()
+
+	ctx := context.Background()
+	old := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	fresh := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	for _, rec := range []Record{
+		{ID: "old", Model: "m", Provider: "p", Cost: 1, CreatedAt: old},
+		{ID: "fresh", Model: "m", Provider: "p", Cost: 1, CreatedAt: fresh},
+	} {
+		if err := repo.Record(ctx, rec); err != nil {
+			t.Fatalf("record %s: %v", rec.ID, err)
+		}
+	}
+
+	n, err := repo.DeleteBefore(ctx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 deleted row, got %d", n)
+	}
+	recs, err := repo.List(ctx, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(recs) != 1 || recs[0].ID != "fresh" {
+		t.Fatalf("unexpected remaining rows: %+v", recs)
 	}
 }

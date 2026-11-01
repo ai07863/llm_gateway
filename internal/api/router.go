@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ func NewRouter(s config.Settings) *gin.Engine {
 	repo, err := usage.NewSQLite(s.DBPath)
 	if err != nil {
 		panic(err)
+	}
+	if s.RetentionDays > 0 {
+		startRetention(repo, s.RetentionDays)
 	}
 	registerModels(v1, models)
 	registerAdmin(v1, repo)
@@ -253,6 +257,29 @@ func NewRouter(s config.Settings) *gin.Engine {
 	)
 
 	return r
+}
+
+// startRetention prunes old usage rows now and then once a day.
+func startRetention(repo usage.Repo, days int) {
+	prune := func() {
+		cutoff := usage.NowFunc().AddDate(0, 0, -days)
+		n, err := repo.DeleteBefore(context.Background(), cutoff)
+		if err != nil {
+			log.Printf("usage retention: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("usage retention: deleted %d rows older than %s", n, cutoff.Format("2006-01-02"))
+		}
+	}
+	prune()
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			prune()
+		}
+	}()
 }
 
 func writeSSEChunk(c *gin.Context, content string) {

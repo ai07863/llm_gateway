@@ -137,3 +137,27 @@ func TestLoadPricingDefaultsTo6h(t *testing.T) {
 		t.Fatalf("want 6h default, got %v", s.PricingRefreshInterval)
 	}
 }
+
+func TestLoadRetentionDays(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t, "RETENTION_DAYS", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "DASHSCOPE_API_KEY")
+
+	t.Setenv("RETENTION_DAYS", "30")
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.RetentionDays != 30 {
+		t.Fatalf("want 30, got %d", s.RetentionDays)
+	}
+
+	t.Setenv("RETENTION_DAYS", "not-a-number")
+	s, err = Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.RetentionDays != 0 {
+		t.Fatalf("invalid value must fall back to 0, got %d", s.RetentionDays)
+	}
+}

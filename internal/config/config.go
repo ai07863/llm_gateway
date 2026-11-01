@@ -24,7 +24,9 @@ type Settings struct {
 	BudgetSoftRatio        float64
 	PricingURL             string
 	PricingRefreshInterval time.Duration
-	Providers              []ProviderConfig
+	// RetentionDays > 0 prunes usage rows older than this; 0 keeps everything.
+	RetentionDays int
+	Providers     []ProviderConfig
 }
 
 func Load() (Settings, error) {
@@ -37,6 +39,7 @@ func Load() (Settings, error) {
 		BudgetSoftRatio:        getfloat("BUDGET_SOFT_RATIO", 0.8),
 		PricingURL:             os.Getenv("PRICING_URL"),
 		PricingRefreshInterval: getduration("PRICING_REFRESH_INTERVAL", 6*time.Hour),
+		RetentionDays:          getint("RETENTION_DAYS", 0),
 	}
 	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
 		s.Providers = append(s.Providers, ProviderConfig{
@@ -74,6 +77,15 @@ func getfloat(k string, def float64) float64 {
 	if v := os.Getenv(k); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func getint(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
 		}
 	}
 	return def

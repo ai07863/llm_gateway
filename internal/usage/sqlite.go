@@ -22,14 +22,30 @@ func monthBounds(month string) (string, string, error) {
 }
 
 func NewSQLite(path string) (Repo, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	memory := path == ":memory:" || strings.Contains(path, "mode=memory")
+	if !memory {
+		// WAL + busy_timeout let the dashboard read while a request writes.
+		// They must go in the DSN: per-connection PRAGMAs would only apply
+		// to whichever pooled connection happened to run them.
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	// A single connection keeps ":memory:" databases (and their schema)
 	// visible to every query, since each connection would otherwise get
 	// its own private in-memory database.
-	db.SetMaxOpenConns(1)
+	if memory {
+		db.SetMaxOpenConns(1)
+	} else {
+		db.SetMaxOpenConns(4)
+	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS usage_records (
 		id TEXT PRIMARY KEY,
 		model TEXT, provider TEXT,
@@ -62,6 +78,15 @@ func (r *sqliteRepo) Record(ctx context.Context, rec Record) error {
 		 VALUES (?,?,?,?,?,?,?,?,?)`,
 		rec.ID, rec.Model, rec.Provider, rec.PromptTokens, rec.CompletionTokens, rec.Cost, rec.SavedCost, boolToInt(rec.CacheHit), rec.CreatedAt.Format("2006-01-02 15:04:05"))
 	return err
+}
+
+func (r *sqliteRepo) DeleteBefore(ctx context.Context, before time.Time) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM usage_records WHERE created_at < ?`, before.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *sqliteRepo) MonthlyCost(ctx context.Context, yyyymm string) (float64, error) {

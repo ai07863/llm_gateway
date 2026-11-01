@@ -72,6 +72,7 @@ type Repo interface {
 	List(ctx context.Context, limit int) ([]Record, error)
 	Summary(ctx context.Context, month string) (Summary, error)
 	Query(ctx context.Context, q Query) (int, []Record, error)
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
 	Close() error
 }
 
