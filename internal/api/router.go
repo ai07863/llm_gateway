@@ -280,7 +280,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 				return provider.ResponsesResult{}, err
 			}
 			name := used.Provider.Name()
-			recordUsage(req.Model, name, res.PromptTokens, res.CompletionTokens)
+			recordUsage(res.Model, name, res.PromptTokens, res.CompletionTokens)
 			m.Latency.WithLabelValues(name).Observe(time.Since(start).Seconds())
 			m.Requests.WithLabelValues(name, "200").Inc()
 			m.Tokens.WithLabelValues(name, "prompt").Add(float64(res.PromptTokens))

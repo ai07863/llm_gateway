@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"llm-gateway/internal/config"
 	"llm-gateway/internal/proxy"
+	"llm-gateway/internal/usage"
 )
 
 func TestResponsesEndpointFailsOverAndPassesThrough(t *testing.T) {
@@ -38,8 +40,9 @@ func TestResponsesEndpointFailsOverAndPassesThrough(t *testing.T) {
 	}))
 	defer backup.Close()
 
+	db := "file:responses_router?mode=memory&cache=shared"
 	s := config.Settings{
-		GatewayToken: "tok", DBPath: "file:responses_router?mode=memory&cache=shared", BudgetMonthlyLimit: 100,
+		GatewayToken: "tok", DBPath: db, BudgetMonthlyLimit: 100,
 		Providers: []config.ProviderConfig{
 			{Name: "primary", BaseURL: primary.URL, APIKey: "k", Model: "primary-model"},
 			{Name: "backup", BaseURL: backup.URL, APIKey: "k", Model: "backup-model"},
@@ -61,5 +64,24 @@ func TestResponsesEndpointFailsOverAndPassesThrough(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"id":"resp_1"`) {
 		t.Fatalf("body not passed through: %q", w.Body.String())
+	}
+
+	repo, err := usage.NewSQLite(db)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	records, err := repo.List(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("list usage: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("want 1 usage record, got %d: %+v", len(records), records)
+	}
+	if records[0].Model != "backup-model" {
+		t.Fatalf("usage must be attributed to served model, got %q", records[0].Model)
+	}
+	if records[0].Provider != "backup" {
+		t.Fatalf("usage must be attributed to serving provider, got %q", records[0].Provider)
 	}
 }
