@@ -258,6 +258,73 @@ func NewRouter(s config.Settings) *gin.Engine {
 		},
 	)
 
+	registerResponses(v1,
+		func(c *gin.Context, req provider.ResponsesRequest) (provider.ResponsesResult, error) {
+			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
+			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
+			case budget.Reject:
+				m.Requests.WithLabelValues("budget", "429").Inc()
+				return provider.ResponsesResult{}, &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
+			case budget.Degrade:
+				score, _ := pricing.Score(req.Model)
+				req.Model = budget.CheaperModel(req.Model, score, modelCandidates)
+			}
+			if len(providers) == 0 {
+				m.Requests.WithLabelValues("none", "502").Inc()
+				return provider.ResponsesResult{}, errors.New("no provider configured")
+			}
+			start := time.Now()
+			res, used, err := proxy.ResponsesWithFailover(c.Request.Context(), targetsForModel(req.Model), req)
+			if err != nil {
+				m.Requests.WithLabelValues("unknown", "502").Inc()
+				return provider.ResponsesResult{}, err
+			}
+			name := used.Provider.Name()
+			recordUsage(req.Model, name, res.PromptTokens, res.CompletionTokens)
+			m.Latency.WithLabelValues(name).Observe(time.Since(start).Seconds())
+			m.Requests.WithLabelValues(name, "200").Inc()
+			m.Tokens.WithLabelValues(name, "prompt").Add(float64(res.PromptTokens))
+			m.Tokens.WithLabelValues(name, "completion").Add(float64(res.CompletionTokens))
+			return res, nil
+		},
+		func(c *gin.Context, req provider.ResponsesRequest) error {
+			cost, _ := repo.MonthlyCost(c.Request.Context(), usage.CurrentMonth())
+			switch budget.Evaluate(cost, s.BudgetMonthlyLimit, s.BudgetSoftRatio) {
+			case budget.Reject:
+				m.Requests.WithLabelValues("budget", "429").Inc()
+				return &StatusError{Status: http.StatusTooManyRequests, Msg: "monthly budget exceeded"}
+			case budget.Degrade:
+				score, _ := pricing.Score(req.Model)
+				req.Model = budget.CheaperModel(req.Model, score, modelCandidates)
+			}
+			if len(providers) == 0 {
+				m.Requests.WithLabelValues("none", "502").Inc()
+				return errors.New("no provider configured")
+			}
+			start := time.Now()
+			ch, used, err := proxy.ResponsesStreamWithFailover(c.Request.Context(), targetsForModel(req.Model), req)
+			if err != nil {
+				m.Requests.WithLabelValues("unknown", "502").Inc()
+				return err
+			}
+			name := used.Provider.Name()
+			prompt, completion, streamErr := writeResponsesSSE(c, ch)
+			switch {
+			case streamErr != nil:
+				m.Requests.WithLabelValues(name, "500").Inc()
+			case c.Request.Context().Err() != nil:
+				m.Requests.WithLabelValues(name, "canceled").Inc()
+			default:
+				recordUsage(req.Model, name, prompt, completion)
+				m.Latency.WithLabelValues(name).Observe(time.Since(start).Seconds())
+				m.Requests.WithLabelValues(name, "200").Inc()
+				m.Tokens.WithLabelValues(name, "prompt").Add(float64(prompt))
+				m.Tokens.WithLabelValues(name, "completion").Add(float64(completion))
+			}
+			return nil
+		},
+	)
+
 	return r
 }
 
