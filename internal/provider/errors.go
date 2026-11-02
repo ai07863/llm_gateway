@@ -9,6 +9,7 @@ type Error struct {
 	Provider   string
 	StatusCode int
 	Retryable  bool
+	Body       string
 	Err        error
 }
 
@@ -26,6 +27,7 @@ func NewStatusError(providerName string, status int, body string) *Error {
 		Provider:   providerName,
 		StatusCode: status,
 		Retryable:  status == 429 || status >= 500,
+		Body:       body,
 		Err:        fmt.Errorf("provider %s status %d: %s", providerName, status, body),
 	}
 }
