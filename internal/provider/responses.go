@@ -39,6 +39,8 @@ type ResponsesProvider interface {
 	ResponsesStream(ctx context.Context, req ResponsesRequest) (<-chan ResponsesChunk, error)
 }
 
+var _ ResponsesProvider = (*openAICompat)(nil)
+
 type responsesPayload struct {
 	Model string `json:"model"`
 	Usage struct {
@@ -114,6 +116,9 @@ type responsesEvent struct {
 			OutputTokens int `json:"output_tokens"`
 			TotalTokens  int `json:"total_tokens"`
 		} `json:"usage"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	} `json:"response"`
 }
 
@@ -154,7 +159,8 @@ func (p *openAICompat) ResponsesStream(ctx context.Context, req ResponsesRequest
 
 		var frame strings.Builder
 		var prompt, completion, total int
-		completed := false
+		var terminal bool
+		var terminalErr error
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -167,10 +173,31 @@ func (p *openAICompat) ResponsesStream(ctx context.Context, req ResponsesRequest
 			return send(ResponsesChunk{Raw: raw})
 		}
 
+		handleEvent := func(ev responsesEvent) {
+			switch ev.Type {
+			case "response.completed", "response.incomplete":
+				terminal = true
+				prompt = ev.Response.Usage.InputTokens
+				completion = ev.Response.Usage.OutputTokens
+				total = ev.Response.Usage.TotalTokens
+			case "response.failed":
+				terminal = true
+				msg := ev.Response.Error.Message
+				if msg == "" {
+					msg = "response.failed"
+				}
+				terminalErr = errors.New(msg)
+			}
+		}
+
 		for scanner.Scan() {
 			line := strings.TrimSuffix(scanner.Text(), "\r")
 			if line == "" {
 				if !flush() {
+					return
+				}
+				if terminal {
+					send(ResponsesChunk{Done: true, Err: terminalErr, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
 					return
 				}
 				continue
@@ -180,24 +207,23 @@ func (p *openAICompat) ResponsesStream(ctx context.Context, req ResponsesRequest
 			if strings.HasPrefix(line, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 				var ev responsesEvent
-				if err := json.Unmarshal([]byte(payload), &ev); err == nil && ev.Type == "response.completed" {
-					completed = true
-					prompt = ev.Response.Usage.InputTokens
-					completion = ev.Response.Usage.OutputTokens
-					total = ev.Response.Usage.TotalTokens
+				if err := json.Unmarshal([]byte(payload), &ev); err == nil {
+					handleEvent(ev)
 				}
 			}
 		}
-		flush()
+		if !flush() {
+			return
+		}
 		if err := scanner.Err(); err != nil {
 			send(ResponsesChunk{Done: true, Err: err, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
 			return
 		}
-		if !completed {
-			send(ResponsesChunk{Done: true, Err: errors.New("upstream stream ended before response.completed"), PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
+		if terminal {
+			send(ResponsesChunk{Done: true, Err: terminalErr, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
 			return
 		}
-		send(ResponsesChunk{Done: true, PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
+		send(ResponsesChunk{Done: true, Err: errors.New("upstream stream ended before response.completed"), PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total})
 	}()
 	return ch, nil
 }

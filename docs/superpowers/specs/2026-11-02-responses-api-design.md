@@ -110,9 +110,12 @@ type ResponsesProvider interface {
   `X-Accel-Buffering: no`。
 - 按空行分隔切分 SSE 帧，逐帧原样写出并 flush，包括 `id:`、`event:`、
   `:HTTP_STATUS/200` 注释行与 `data:` 行；不追加 `[DONE]`（Responses 客户端不需要）。
-- 从 `data:` JSON 中识别 `type == "response.completed"`，读取
-  `response.usage.input_tokens/output_tokens/total_tokens`。
-- 上游正常结束（收到 `response.completed` 后关闭）：记账并记录 200。
+- 从 `data:` JSON 中识别终态事件，读取
+  `response.usage.input_tokens/output_tokens/total_tokens`：
+  - `response.completed`、`response.incomplete`：终态成功，记账并记录 200；
+  - `response.failed`：终态失败，向客户端写 error 事件（消息取
+    `response.error.message`，缺省为 `"response.failed"`），记录 500，不记账。
+- 收到终态事件并转发完该帧后立即停止读取上游，不等待连接 EOF。
 - 中途读流错误：向客户端写出 `event: error` + `data: {"type":"error","message":"..."}`
   后关闭；记录 500，不记账。
 - 客户端断开：停止读取，记录 `canceled`，不记账。
@@ -135,7 +138,8 @@ type ResponsesProvider interface {
 | 上游 200 非流式 | 上游 body | 是 |
 | 上游 4xx | 上游状态码 + body | 否 |
 | 上游 5xx/网络，重试耗尽 | 502 JSON error | 否 |
-| 流式正常完成 | 上游 SSE 帧 | 是 |
+| 流式正常完成（`completed` / `incomplete`） | 上游 SSE 帧 | 是 |
+| 流式终态失败（`failed`） | 上游已发帧 + error 事件 | 否 |
 | 流式中途错误 | 上游已发帧 + error 事件 | 否 |
 | 客户端断开 | 连接关闭 | 否 |
 | 预算拒绝 | 429 JSON error | 否 |

@@ -69,6 +69,9 @@ func TestRegisterResponsesStreamsFramesVerbatim(t *testing.T) {
 	if w.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("content-type = %q", w.Header().Get("Content-Type"))
 	}
+	if w.Header().Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("x-accel-buffering = %q", w.Header().Get("X-Accel-Buffering"))
+	}
 }
 
 func TestRegisterResponsesPassesUpstream4xxBody(t *testing.T) {
@@ -133,8 +136,12 @@ func TestRegisterResponsesStreamErrorWritesSinglePayload(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	body := w.Body.String()
-	if got := strings.Count(body, `"message":"`+errMsg+`"`); got != 1 {
-		t.Fatalf("error payload count = %d, body=%q", got, body)
+	const payload = `data: {"type":"error","message":"` + errMsg + `"}`
+	if got := strings.Count(body, payload); got != 1 {
+		t.Fatalf("error payload count = %d, want 1, body=%q", got, body)
+	}
+	if strings.Contains(body, `"error":`) {
+		t.Fatalf("error payload must use type/message shape, body=%q", body)
 	}
 	if got := strings.Count(body, "event: error"); got != 1 {
 		t.Fatalf("error frame count = %d, body=%q", got, body)

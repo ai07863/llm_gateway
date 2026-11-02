@@ -315,7 +315,7 @@ func NewRouter(s config.Settings) *gin.Engine {
 			case c.Request.Context().Err() != nil:
 				m.Requests.WithLabelValues(name, "canceled").Inc()
 			default:
-				recordUsage(req.Model, name, prompt, completion)
+				recordUsage(used.Model, name, prompt, completion)
 				m.Latency.WithLabelValues(name).Observe(time.Since(start).Seconds())
 				m.Requests.WithLabelValues(name, "200").Inc()
 				m.Tokens.WithLabelValues(name, "prompt").Add(float64(prompt))

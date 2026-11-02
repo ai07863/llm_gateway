@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"llm-gateway/internal/config"
 )
@@ -143,5 +144,95 @@ func TestOpenAICompatResponsesStreamEarlyEOFIsError(t *testing.T) {
 	}
 	if done.Err == nil {
 		t.Fatal("want error when upstream closes before response.completed")
+	}
+}
+
+func TestOpenAICompatResponsesStreamIncompleteIsTerminalSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data:{\"type\":\"response.incomplete\",\"response\":{\"usage\":{\"input_tokens\":6,\"output_tokens\":1,\"total_tokens\":7}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(ResponsesProvider)
+	ch, err := p.ResponsesStream(context.Background(), ResponsesRequest{Model: "m", Stream: true, Raw: []byte(`{"model":"m","input":"hi"}`)})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	var done ResponsesChunk
+	for c := range ch {
+		if c.Done {
+			done = c
+		}
+	}
+	if done.Err != nil {
+		t.Fatalf("response.incomplete must be terminal success, got error: %v", done.Err)
+	}
+	if done.PromptTokens != 6 || done.CompletionTokens != 1 || done.TotalTokens != 7 {
+		t.Fatalf("unexpected usage: %+v", done)
+	}
+}
+
+func TestOpenAICompatResponsesStreamFailedIsTerminalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data:{\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstream exploded\"}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(ResponsesProvider)
+	ch, err := p.ResponsesStream(context.Background(), ResponsesRequest{Model: "m", Stream: true, Raw: []byte(`{"model":"m","input":"hi"}`)})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	var done ResponsesChunk
+	for c := range ch {
+		if c.Done {
+			done = c
+		}
+	}
+	if done.Err == nil || done.Err.Error() != "upstream exploded" {
+		t.Fatalf("want terminal error carrying upstream message, got %v", done.Err)
+	}
+}
+
+func TestOpenAICompatResponsesStreamStopsAfterTerminalEvent(t *testing.T) {
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data:{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2,\"total_tokens\":7}}}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-unblock
+	}))
+	defer srv.Close()
+	defer close(unblock)
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(ResponsesProvider)
+	ch, err := p.ResponsesStream(context.Background(), ResponsesRequest{Model: "m", Stream: true, Raw: []byte(`{"model":"m","input":"hi"}`)})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case c, ok := <-ch:
+			if !ok {
+				t.Fatal("stream closed without Done after terminal event")
+			}
+			if c.Done {
+				if c.Err != nil {
+					t.Fatalf("unexpected done error: %v", c.Err)
+				}
+				if c.TotalTokens != 7 {
+					t.Fatalf("unexpected usage: %+v", c)
+				}
+				return
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for Done; reader must stop after terminal event")
+		}
 	}
 }

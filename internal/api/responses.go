@@ -17,6 +17,11 @@ type responsesProbe struct {
 	Stream bool   `json:"stream"`
 }
 
+type responsesSSEError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
 func registerResponses(
 	v1 *gin.RouterGroup,
 	responses func(c *gin.Context, req provider.ResponsesRequest) (provider.ResponsesResult, error),
@@ -74,6 +79,7 @@ func writeResponsesError(c *gin.Context, err error) {
 func writeResponsesSSE(c *gin.Context, ch <-chan provider.ResponsesChunk) (int, int, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
 	var prompt, completion int
 	var streamErr error
 	c.Stream(func(w io.Writer) bool {
@@ -83,7 +89,7 @@ func writeResponsesSSE(c *gin.Context, ch <-chan provider.ResponsesChunk) (int, 
 		}
 		if chunk.Err != nil {
 			streamErr = chunk.Err
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", mustJSON(gin.H{"error": gin.H{"message": chunk.Err.Error()}}))
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", mustJSON(responsesSSEError{Type: "error", Message: chunk.Err.Error()}))
 			return false
 		}
 		if chunk.Raw != "" {

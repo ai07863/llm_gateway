@@ -274,6 +274,10 @@ const resp = await client.chat.completions.create({
 console.log(resp.choices[0].message.content);
 ```
 
+Codex 0.166 可以直接使用 Responses 协议：在 `~/.codex/config.toml` 中把
+`model_provider` 的 `base_url` 指向 `http://127.0.0.1:8090/v1`，并设置
+`wire_api = "responses"`。
+
 完整可运行的最小示例见 [`examples/python_openai_client.py`](examples/python_openai_client.py)。
 
 接入后，你的多个 AI 项目都只需指向这一个网关，无需各自保存 provider 的 key；成本、预算、缓存与故障转移都由网关统一处理。
