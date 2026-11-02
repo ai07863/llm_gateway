@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,5 +98,48 @@ func TestRegisterResponsesRejectsBadJSONAndMissingModel(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("body %q: status = %d", body, w.Code)
 		}
+	}
+}
+
+func TestRegisterResponsesPassesThroughEmptyUpstream4xx(t *testing.T) {
+	r := newResponsesTestRouter(func(c *gin.Context, req provider.ResponsesRequest) (provider.ResponsesResult, error) {
+		return provider.ResponsesResult{}, provider.NewStatusError("upstream", http.StatusTooManyRequests, "")
+	}, nil)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"m1","input":"hi"}`))
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body=%q", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "" {
+		t.Fatalf("body = %q, want empty", w.Body.String())
+	}
+}
+
+func TestRegisterResponsesStreamErrorWritesSinglePayload(t *testing.T) {
+	const errMsg = "stream broke"
+	r := newResponsesTestRouter(nil, func(c *gin.Context, req provider.ResponsesRequest) error {
+		ch := make(chan provider.ResponsesChunk, 1)
+		ch <- provider.ResponsesChunk{Err: errors.New(errMsg)}
+		close(ch)
+		_, _, err := writeResponsesSSE(c, ch)
+		return err
+	})
+
+	w := newCloseNotifierRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"m1","input":"hi","stream":true}`))
+	r.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if got := strings.Count(body, `"message":"`+errMsg+`"`); got != 1 {
+		t.Fatalf("error payload count = %d, body=%q", got, body)
+	}
+	if got := strings.Count(body, "event: error"); got != 1 {
+		t.Fatalf("error frame count = %d, body=%q", got, body)
+	}
+	if !strings.HasSuffix(body, "\n\n") {
+		t.Fatalf("JSON appended after SSE frame: %q", body)
 	}
 }

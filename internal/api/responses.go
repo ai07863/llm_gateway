@@ -39,7 +39,7 @@ func registerResponses(
 		}
 		req := provider.ResponsesRequest{Model: probe.Model, Stream: probe.Stream, Raw: raw}
 		if probe.Stream {
-			if err := responsesStream(c, req); err != nil {
+			if err := responsesStream(c, req); err != nil && !c.Writer.Written() {
 				writeResponsesError(c, err)
 			}
 			return
@@ -57,7 +57,7 @@ func registerResponses(
 // untouched so clients see the provider's native error shape.
 func writeResponsesError(c *gin.Context, err error) {
 	var pe *provider.Error
-	if errors.As(err, &pe) && pe.StatusCode >= 400 && pe.StatusCode < 500 && pe.Body != "" {
+	if errors.As(err, &pe) && pe.StatusCode >= 400 && pe.StatusCode < 500 {
 		c.Data(pe.StatusCode, "application/json", []byte(pe.Body))
 		return
 	}
