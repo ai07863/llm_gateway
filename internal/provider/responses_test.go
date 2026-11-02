@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"llm-gateway/internal/config"
@@ -75,5 +76,72 @@ func TestOpenAICompatResponses4xxExposesBodyAndIsNotRetryable(t *testing.T) {
 	}
 	if pe.StatusCode != http.StatusBadRequest || pe.Body != errBody {
 		t.Fatalf("want status 400 and upstream body, got %d %q", pe.StatusCode, pe.Body)
+	}
+}
+
+func TestOpenAICompatResponsesStreamForwardsFramesAndParsesUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if string(body["model"]) != `"m2"` {
+			t.Errorf("model not rewritten: %s", body["model"])
+		}
+		if string(body["stream"]) != "true" {
+			t.Errorf("stream not forced: %s", body["stream"])
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "id:1\nevent:response.created\n:HTTP_STATUS/200\ndata:{\"type\":\"response.created\"}\n\n")
+		_, _ = io.WriteString(w, "id:2\nevent:response.completed\n:HTTP_STATUS/200\ndata:{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2,\"total_tokens\":7}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m1"}).(ResponsesProvider)
+	ch, err := p.ResponsesStream(context.Background(), ResponsesRequest{Model: "m2", Stream: true, Raw: []byte(`{"model":"m1","input":"hi"}`)})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	var raw strings.Builder
+	var done ResponsesChunk
+	for c := range ch {
+		if c.Done {
+			done = c
+			break
+		}
+		raw.WriteString(c.Raw)
+	}
+	if !strings.Contains(raw.String(), "event:response.created") || !strings.Contains(raw.String(), ":HTTP_STATUS/200") {
+		t.Fatalf("frames must be forwarded verbatim, got %q", raw.String())
+	}
+	if done.Err != nil {
+		t.Fatalf("unexpected done error: %v", done.Err)
+	}
+	if done.PromptTokens != 5 || done.CompletionTokens != 2 || done.TotalTokens != 7 {
+		t.Fatalf("unexpected usage: %+v", done)
+	}
+}
+
+func TestOpenAICompatResponsesStreamEarlyEOFIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "id:1\nevent:response.created\ndata:{\"type\":\"response.created\"}\n\n")
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(config.ProviderConfig{Name: "fake", BaseURL: srv.URL, APIKey: "k", Model: "m"}).(ResponsesProvider)
+	ch, err := p.ResponsesStream(context.Background(), ResponsesRequest{Model: "m", Stream: true, Raw: []byte(`{"model":"m","input":"hi"}`)})
+	if err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	var done ResponsesChunk
+	for c := range ch {
+		if c.Done {
+			done = c
+		}
+	}
+	if done.Err == nil {
+		t.Fatal("want error when upstream closes before response.completed")
 	}
 }
