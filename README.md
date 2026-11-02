@@ -186,6 +186,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/v1/chat/completions` | 对话补全（`stream: true` 时走 SSE） |
+| POST | `/v1/responses` | OpenAI Responses API 透传（支持流式与工具调用） |
 | POST | `/v1/embeddings` | 文本向量化（`input` 可以是字符串或字符串数组） |
 | GET | `/v1/models` | 列出已配置的模型 |
 | GET | `/v1/admin/usage` | 用量查询：当月成本 `month_cost`、当月节省 `month_saved` + 最近记录 `records` |
