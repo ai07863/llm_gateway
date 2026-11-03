@@ -1,0 +1,20 @@
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+    image: llm-gateway:latest
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_PATH: /app/data/gateway.db
+    volumes:
+      - gateway_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  gateway_data:

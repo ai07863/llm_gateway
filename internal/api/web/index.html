@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM Gateway 用量看板</title>
+<script src="/assets/chart.js"></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --muted:#6b7280; --accent:#2563eb; --warn:#d97706; --bad:#dc2626; --good:#16a34a; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 0; background: var(--bg); color:#111827; }
+  header { display:flex; align-items:center; gap:16px; padding:16px 24px; background:#fff; border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; }
+  .spacer { flex:1; }
+  .muted { color: var(--muted); font-size:12px; }
+  main { padding: 20px 24px 48px; display:flex; flex-direction:column; gap:16px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .kpi .label { color:var(--muted); font-size:12px; }
+  .kpi .value { font-size:22px; font-weight:600; margin-top:6px; font-variant-numeric: tabular-nums; }
+  .budget-bar { height:10px; background:#e5e7eb; border-radius:999px; overflow:hidden; margin-top:8px; }
+  .budget-fill { height:100%; width:0; background:var(--good); transition:width .3s; }
+  .budget-fill.warn { background:var(--warn); }
+  .budget-fill.bad { background:var(--bad); }
+  .grid2 { display:grid; grid-template-columns:2fr 1fr; gap:16px; }
+  @media (max-width: 900px){ .grid2 { grid-template-columns:1fr; } }
+  .card h2 { font-size:14px; margin:0 0 10px; }
+  .chart-wrap { position:relative; height:260px; }
+  canvas { max-width:100%; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button, select, input { font: inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  button { cursor:pointer; }
+  button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  table { border-collapse:collapse; width:100%; font-size:12px; font-family: ui-monospace, Consolas, monospace; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:right; white-space:nowrap; }
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align:left; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#9ca3af; margin-right:6px; }
+  .dot.on { background:var(--good); }
+  .empty { color:var(--muted); padding:20px; text-align:center; }
+  .hidden { display:none !important; }
+  #budget-text { margin-bottom:2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM Gateway</h1>
+  <span id="month-label" class="muted"></span>
+  <span class="spacer"></span>
+  <span id="conn" class="muted"><span class="dot"></span>未连接</span>
+  <span id="updated" class="muted"></span>
+  <button onclick="refreshAll()">刷新</button>
+</header>
+<main>
+  <div id="error-bar" class="card hidden" style="border-color:var(--bad);color:var(--bad)"></div>
+
+  <div id="token-bar" class="card">
+    <div class="row">
+      <input id="token" placeholder="gateway token" style="flex:1;min-width:240px" />
+      <button onclick="saveToken()">保存</button>
+    </div>
+    <div class="muted" style="margin-top:6px">首次填入 token，之后会记住（也可用 /?token=你的token）。</div>
+  </div>
+
+  <section class="kpis">
+    <div class="card kpi"><div class="label">本月花费（元）</div><div class="value" id="k-cost">-</div></div>
+    <div class="card kpi"><div class="label">本月节省（元）</div><div class="value" id="k-saved">-</div></div>
+    <div class="card kpi"><div class="label">本月请求数</div><div class="value" id="k-req">-</div></div>
+    <div class="card kpi"><div class="label">缓存命中率</div><div class="value" id="k-cache">-</div></div>
+    <div class="card kpi"><div class="label">本月 tokens</div><div class="value" id="k-tokens">-</div></div>
+  </section>
+
+  <section class="card">
+    <h2>预算</h2>
+    <div id="budget-text" class="muted">-</div>
+    <div class="budget-bar"><div id="budget-fill" class="budget-fill"></div></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>趋势
+        <span class="row" style="float:right">
+          <button id="g-day" class="active" onclick="setGranularity('day')">按天</button>
+          <button id="g-hour" onclick="setGranularity('hour')">按小时</button>
+        </span>
+      </h2>
+      <div class="row" id="range-row" style="margin-bottom:8px">
+        <button data-range="today" onclick="setRange('today')">今日</button>
+        <button data-range="7d" onclick="setRange('7d')">近7天</button>
+        <button data-range="30d" class="active" onclick="setRange('30d')">近30天</button>
+        <button data-range="month" onclick="setRange('month')">本月</button>
+      </div>
+      <div class="chart-wrap"><canvas id="trend"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>模型成本占比</h2>
+      <div class="chart-wrap"><canvas id="models"></canvas></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>供应商</h2>
+      <table id="providers"><thead><tr><th>供应商</th><th>请求</th><th>成本</th><th>占比</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>运行健康</h2>
+      <div class="row" style="gap:24px">
+        <div><div class="muted">本次请求数</div><div class="value" id="h-req">-</div></div>
+        <div><div class="muted">错误率</div><div class="value" id="h-err">-</div></div>
+        <div><div class="muted">P50</div><div class="value" id="h-p50">-</div></div>
+        <div><div class="muted">P95</div><div class="value" id="h-p95">-</div></div>
+        <div><div class="muted">本次运行</div><div class="value" id="h-uptime">-</div></div>
+      </div>
+      <table id="status" style="margin-top:12px"><thead><tr><th>供应商</th><th>状态</th><th>次数</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>调用明细</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="f-provider" onchange="applyFilters()"><option value="">全部供应商</option></select>
+      <select id="f-model" onchange="applyFilters()"><option value="">全部模型</option></select>
+      <select id="f-cache" onchange="applyFilters()"><option value="">全部缓存</option><option value="hit">命中</option><option value="miss">未命中</option></select>
+      <input id="f-q" placeholder="搜索 id / 模型" onkeydown="if(event.key==='Enter')applyFilters()" />
+      <span class="spacer"></span>
+      <span id="page-info" class="muted"></span>
+      <button id="prev" onclick="prevPage()">上一页</button>
+      <button id="next" onclick="nextPage()">下一页</button>
+    </div>
+    <table id="records">
+      <thead><tr><th>时间</th><th>模型</th><th>供应商</th><th>prompt</th><th>completion</th><th>成本(元)</th><th>节省(元)</th><th>缓存</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="records-empty" class="empty hidden">暂无数据</div>
+  </section>
+</main>
+<script>
+const S = {
+  token: '',
+  granularity: 'day',
+  range: '30d',
+  page: 0,
+  limit: 25,
+  total: 0,
+  summary: null,
+  charts: {},
+  streamAbort: null,
+};
+
+const $ = (id) => document.getElementById(id);
+
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[ch]);
+}
+function num(v) { return Number(v) || 0; }
+function money(v) {
+  const n = num(v);
+  // 0.002 元被 toFixed(2) 显示成 0.00，小额成本改用 4 位小数。
+  return n !== 0 && Math.abs(n) < 0.01 ? n.toFixed(4) : n.toFixed(2);
+}
+function pct(v) { return (num(v) * 100).toFixed(1) + '%'; }
+function int(v) { return num(v).toLocaleString('zh-CN'); }
+function ms(v) { const n = num(v); return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ms'; }
+function uptime(v) {
+  const s = num(v);
+  if (s < 60) return s + ' 秒';
+  if (s < 3600) return Math.floor(s / 60) + ' 分钟';
+  if (s < 86400) return (s / 3600).toFixed(1) + ' 小时';
+  return (s / 86400).toFixed(1) + ' 天';
+}
+
+function initToken() {
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = params.get('token');
+  if (fromUrl) {
+    localStorage.setItem('gateway_token', fromUrl);
+    params.delete('token');
+    const qs = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+  S.token = localStorage.getItem('gateway_token') || '';
+  $('token').value = S.token;
+  $('token-bar').classList.toggle('hidden', !!S.token);
+  if (S.token) refreshAll();
+}
+
+function saveToken() {
+  const t = $('token').value.trim();
+  if (!t) return;
+  localStorage.setItem('gateway_token', t);
+  S.token = t;
+  $('token-bar').classList.add('hidden');
+  refreshAll();
+}
+
+async function api(path) {
+  let res;
+  try {
+    res = await fetch(path, { headers: { Authorization: 'Bearer ' + S.token } });
+  } catch (e) {
+    throw new Error('网络错误，无法连接网关');
+  }
+  if (res.status === 401) {
+    $('token-bar').classList.remove('hidden');
+    throw new Error('unauthorized');
+  }
+  if (!res.ok) throw new Error(path + ' 返回 HTTP ' + res.status);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error('响应解析失败：' + path);
+  }
+}
+
+function showError(msg) {
+  $('error-bar').textContent = '加载失败：' + msg;
+  $('error-bar').classList.remove('hidden');
+}
+
+function hideError() {
+  $('error-bar').classList.add('hidden');
+}
+
+function setConn(ok, label) {
+  $('conn').innerHTML = '<span class="dot' + (ok ? ' on' : '') + '"></span>' + (label || (ok ? '已连接' : '未连接'));
+}
+function stamp() {
+  $('updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+function setGranularity(g) {
+  S.granularity = g;
+  $('g-day').classList.toggle('active', g === 'day');
+  $('g-hour').classList.toggle('active', g === 'hour');
+  renderTrend();
+}
+
+function setRange(r) {
+  S.range = r;
+  document.querySelectorAll('#range-row button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.range === r);
+  });
+  renderTrend();
+}
+
+function buckets() {
+  const s = S.summary;
+  if (!s) return [];
+  if (S.granularity === 'hour') {
+    const list = s.by_hour || [];
+    const n = { today: 24, '7d': 168 }[S.range];
+    return n ? list.slice(-n) : list;
+  }
+  const list = s.by_day || [];
+  const n = { today: 1, '7d': 7, '30d': 30 }[S.range];
+  return n ? list.slice(-n) : list;
+}
+
+function renderTrend() {
+  if (!S.summary || typeof Chart === 'undefined') return;
+  const list = buckets();
+  const labels = list.map((b) => (S.granularity === 'hour' ? b.hour.slice(5) : b.day.slice(5)));
+  const costs = list.map((b) => b.cost);
+  const reqs = list.map((b) => b.requests);
+
+  if (!S.charts.trend) {
+    S.charts.trend = new Chart($('trend'), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'line', label: '成本(元)', data: costs, yAxisID: 'y',
+            borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.12)',
+            fill: true, tension: 0.3, pointRadius: 2,
+          },
+          {
+            type: 'bar', label: '请求数', data: reqs, yAxisID: 'y1',
+            backgroundColor: 'rgba(156,163,175,.35)', borderRadius: 3,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: (v) => money(v) } },
+          y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { precision: 0 } },
+        },
+      },
+    });
+  } else {
+    const ch = S.charts.trend;
+    ch.data.labels = labels;
+    ch.data.datasets[0].data = costs;
+    ch.data.datasets[1].data = reqs;
+    ch.update();
+  }
+}
+
+function renderModels() {
+  if (!S.summary || typeof Chart === 'undefined') return;
+  const list = (S.summary.by_model || []).slice().sort((a, b) => b.cost - a.cost);
+  const top = list.slice(0, 8);
+  const labels = top.map((m) => m.model || '(unknown)');
+  const data = top.map((m) => m.cost);
+  const rest = list.slice(8);
+  if (rest.length) {
+    labels.push('其他');
+    data.push(rest.reduce((sum, m) => sum + num(m.cost), 0));
+  }
+  if (!labels.length) {
+    labels.push('无数据');
+    data.push(0);
+  }
+
+  if (!S.charts.models) {
+    S.charts.models = new Chart($('models'), {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#65a30d', '#db2777', '#6b7280'],
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (ctx) => ctx.label + ' ' + money(ctx.parsed) + ' 元' } },
+        },
+      },
+    });
+  } else {
+    const ch = S.charts.models;
+    ch.data.labels = labels;
+    ch.data.datasets[0].data = data;
+    ch.update();
+  }
+}
+
+function renderKpis(s) {
+  const t = s.totals || {};
+  $('k-cost').textContent = money(t.cost);
+  $('k-saved').textContent = money(t.saved);
+  $('k-req').textContent = int(t.requests);
+  $('k-cache').textContent = pct(t.cache_hit_ratio);
+  $('k-tokens').textContent = int(num(t.prompt_tokens) + num(t.completion_tokens));
+  $('month-label').textContent = s.month || '';
+}
+
+function renderBudget(s) {
+  const b = s.budget || {};
+  const fill = $('budget-fill');
+  if (num(b.limit) > 0) {
+    const ratio = num(b.used_ratio);
+    const flag = b.rejected ? ' · 已超限' : b.degraded ? ' · 已降级' : '';
+    $('budget-text').textContent = '已用 ' + money(b.cost) + ' / ' + money(b.limit) + ' 元（' + pct(ratio) + '）' + flag;
+    fill.style.width = Math.min(100, ratio * 100) + '%';
+    fill.className = 'budget-fill' + (b.rejected ? ' bad' : (b.degraded || ratio >= num(b.soft_ratio)) ? ' warn' : '');
+  } else {
+    $('budget-text').textContent = '未启用预算限制（BUDGET_MONTHLY_LIMIT=0）';
+    fill.style.width = '0';
+    fill.className = 'budget-fill';
+  }
+}
+
+function renderProviders(s) {
+  const total = (s.by_provider || []).reduce((sum, p) => sum + num(p.cost), 0);
+  const tb = $('providers').querySelector('tbody');
+  const rows = s.by_provider || [];
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted">暂无数据</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map((p) => {
+    const share = total > 0 ? num(p.cost) / total : 0;
+    return '<tr><td>' + esc(p.provider || '-') + '</td><td>' + int(p.requests) + '</td><td>' + money(p.cost) + '</td><td>' + pct(share) + '</td></tr>';
+  }).join('');
+}
+
+function fillSelect(id, values, allLabel) {
+  const sel = $(id);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">' + allLabel + '</option>' + values.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join('');
+  sel.value = values.indexOf(current) >= 0 ? current : '';
+}
+
+function renderSummary(s) {
+  S.summary = s;
+  renderKpis(s);
+  renderBudget(s);
+  renderProviders(s);
+  fillSelect('f-provider', (s.by_provider || []).map((p) => p.provider).filter(Boolean), '全部供应商');
+  fillSelect('f-model', (s.by_model || []).map((m) => m.model).filter(Boolean), '全部模型');
+  renderTrend();
+  renderModels();
+}
+
+async function loadSummary() {
+  if (!S.token) return;
+  try {
+    renderSummary(await api('/v1/admin/summary'));
+    hideError();
+    stamp();
+  } catch (e) {
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
+  }
+}
+
+async function loadHealth() {
+  if (!S.token) return;
+  try {
+    const h = await api('/v1/admin/health');
+    $('h-req').textContent = int(h.requests_total);
+    $('h-err').textContent = pct(h.error_rate);
+    $('h-p50').textContent = ms(h.latency_ms.p50);
+    $('h-p95').textContent = ms(h.latency_ms.p95);
+    $('h-uptime').textContent = uptime(h.uptime_seconds);
+    const tb = $('status').querySelector('tbody');
+    const rows = (h.by_status || []).slice().sort((a, b) => b.count - a.count).slice(0, 8);
+    tb.innerHTML = rows.length
+      ? rows.map((r) => '<tr><td>' + esc(r.provider || '-') + '</td><td>' + esc(r.status) + '</td><td>' + int(r.count) + '</td></tr>').join('')
+      : '<tr><td colspan="3" class="muted">暂无流量</td></tr>';
+    hideError();
+  } catch (e) {
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
+  }
+}
+
+function filterParams() {
+  const p = new URLSearchParams();
+  const provider = $('f-provider').value;
+  const model = $('f-model').value;
+  const cache = $('f-cache').value;
+  const q = $('f-q').value.trim();
+  if (provider) p.set('provider', provider);
+  if (model) p.set('model', model);
+  if (cache) p.set('cache', cache);
+  if (q) p.set('q', q);
+  p.set('limit', String(S.limit));
+  p.set('offset', String(S.page * S.limit));
+  return p;
+}
+
+function recordRow(r) {
+  return '<tr>'
+    + '<td>' + esc(r.created_at) + '</td>'
+    + '<td>' + esc(r.model || '-') + '</td>'
+    + '<td>' + esc(r.provider || '-') + '</td>'
+    + '<td>' + int(r.prompt_tokens) + '</td>'
+    + '<td>' + int(r.completion_tokens) + '</td>'
+    + '<td>' + money(r.cost) + '</td>'
+    + '<td>' + money(r.saved_cost) + '</td>'
+    + '<td>' + (r.cache_hit ? '命中' : '-') + '</td>'
+    + '</tr>';
+}
+
+async function loadRecords() {
+  if (!S.token) return;
+  try {
+    const data = await api('/v1/admin/requests?' + filterParams().toString());
+    S.total = num(data.total);
+    const rows = data.records || [];
+    $('records').querySelector('tbody').innerHTML = rows.map(recordRow).join('');
+    $('records-empty').classList.toggle('hidden', rows.length > 0);
+    const pages = Math.max(1, Math.ceil(S.total / S.limit));
+    $('page-info').textContent = '第 ' + (S.page + 1) + '/' + pages + ' 页 · 共 ' + S.total + ' 条';
+    $('prev').disabled = S.page <= 0;
+    $('next').disabled = S.page >= pages - 1;
+    hideError();
+  } catch (e) {
+    if (e.message === 'unauthorized') return;
+    setConn(false);
+    showError(e.message);
+  }
+}
+
+function applyFilters() {
+  S.page = 0;
+  loadRecords();
+}
+
+function prevPage() {
+  if (S.page > 0) {
+    S.page -= 1;
+    loadRecords();
+  }
+}
+
+function nextPage() {
+  if ((S.page + 1) * S.limit < S.total) {
+    S.page += 1;
+    loadRecords();
+  }
+}
+
+function refreshAll() {
+  loadSummary();
+  loadHealth();
+  loadRecords();
+  startStream();
+}
+
+let refreshTimer = null;
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    loadSummary();
+    loadRecords();
+  }, 500);
+}
+
+let streamRetry = 0;
+let streamTimer = null;
+
+function stopStream() {
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
+  }
+  if (S.streamAbort) {
+    S.streamAbort.abort();
+    S.streamAbort = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (!S.token) return;
+  streamRetry = Math.min(streamRetry + 1, 7);
+  const delay = Math.min(30000, 1000 * Math.pow(2, streamRetry - 1));
+  setConn(false, '重连中… ' + Math.round(delay / 1000) + 's');
+  if (streamTimer) clearTimeout(streamTimer);
+  streamTimer = setTimeout(() => {
+    streamTimer = null;
+    startStream();
+  }, delay);
+}
+
+async function startStream() {
+  if (!S.token) return;
+  stopStream();
+  S.streamAbort = new AbortController();
+  try {
+    const res = await fetch('/v1/admin/usage/stream', {
+      headers: { Authorization: 'Bearer ' + S.token },
+      signal: S.streamAbort.signal,
+    });
+    if (!res.ok) throw new Error('stream ' + res.status);
+    streamRetry = 0;
+    setConn(true);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const chunks = buf.split('\n\n');
+      buf = chunks.pop();
+      if (chunks.some((chunk) => /^data:\s*\S/m.test(chunk))) scheduleRefresh();
+    }
+    setConn(false);
+  } catch (e) {
+    // 主动 abort（页面刷新数据/二次 startStream）不算断线，不重连。
+    if (e.name === 'AbortError') return;
+    setConn(false);
+  }
+  scheduleReconnect();
+}
+
+function boot() {
+  initToken();
+  setInterval(() => {
+    if (!S.token || document.hidden) return;
+    loadSummary();
+    loadHealth();
+  }, 10000);
+}
+
+boot();
+</script>
+</body>
+</html>
