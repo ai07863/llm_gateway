@@ -16,6 +16,7 @@
 ## 功能特性
 
 - **OpenAI 兼容 API**：`POST /v1/chat/completions`（支持 SSE 流式）、`POST /v1/embeddings`、`GET /v1/models`。
+- **Responses API 透传**：`POST /v1/responses` 支持非流式与 SSE 流式、工具调用和上游 4xx 原样透传；可直接作为 Codex 0.166 的 `wire_api = "responses"` 后端。
 - **多 provider 转发 + 故障转移**：主 provider 遇到**可重试错误**（网络 / 超时 / 5xx / 429）时，先在**同一 provider** 上做指数退避重试（默认 3 次），仍失败才切换到备用 provider；备用 provider 使用**其自身配置的模型**；**不可重试错误**（其它 4xx）直接返回，不切换；全部失败返回 `502`。
 - **成本 / Token 落库**：每次调用写入 SQLite，可通过 `/v1/admin/usage` 查询历史用量与当月成本。
 - **预算护栏**：当月花费接近上限时**降级**到便宜模型，超上限时**拒绝**（`429`）；降级只在存在**更便宜的、已配置的模型**时发生，否则保持原模型不变。
